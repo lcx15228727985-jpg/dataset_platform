@@ -1,0 +1,90 @@
+.page {
+  min-height: 100vh;
+  background: #1a1a1a;
+  color: #eee;
+}
+
+.header {
+  padding: 1rem 1.5rem;
+  background: #222;
+  border-bottom: 1px solid #333;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+.backLink {
+  color: #0a5;
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+.backLink:hover { text-decoration: underline; }
+.header h1 { margin: 0; font-size: 1.25rem; font-weight: 600; }
+
+.main {
+  padding: 1.5rem 2rem;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.controls {
+  margin-bottom: 2rem;
+}
+.controls label {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.9rem;
+  color: #bbb;
+}
+.controls select {
+  padding: 8px 12px;
+  background: #333;
+  color: #eee;
+  border: 1px solid #444;
+  border-radius: 6px;
+  font-size: 0.95rem;
+}
+
+.chartSection {
+  background: #252525;
+  border-radius: 8px;
+  padding: 1.5rem;
+  margin-bottom: 2rem;
+}
+.chartSection h2 {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #aaa;
+  margin: 0 0 1rem 0;
+}
+.chartWrap {
+  background: #1e1e1e;
+  border-radius: 6px;
+  padding: 1rem;
+  min-height: 520px;
+}
+
+.summary h2 {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #aaa;
+  margin: 0 0 1rem 0;
+}
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 1rem;
+}
+.statItem {
+  background: #252525;
+  padding: 1rem;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.statLabel { font-size: 0.75rem; color: #888; }
+.statValue { font-size: 1.1rem; font-weight: 600; color: #0a5; }
+
+.error { padding: 2rem; color: #f66; }
+.loading { padding: 1rem; color: #888; }

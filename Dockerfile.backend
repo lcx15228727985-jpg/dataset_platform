@@ -1,0 +1,19 @@
+# 后端 API（FastAPI + uvicorn），用于 Linux 部署，连接 compose 中的 Postgres
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# 后端代码与依赖
+COPY dataset_viewer/backend/requirements.txt ./dataset_viewer/backend/
+RUN pip install --no-cache-dir -r dataset_viewer/backend/requirements.txt
+
+COPY dataset_viewer/backend/ ./dataset_viewer/backend/
+COPY dataset_viewer/ ./dataset_viewer/
+
+# 运行时以 dataset_viewer 为当前目录，才能 python -m backend.main
+WORKDIR /app/dataset_viewer
+
+ENV PYTHONUNBUFFERED=1
+EXPOSE 8000
+
+CMD ["python", "-m", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]

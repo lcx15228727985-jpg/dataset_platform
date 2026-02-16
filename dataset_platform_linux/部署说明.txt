@@ -1,0 +1,174 @@
+================================================================================
+  数据集标注平台 - Linux 部署说明（解压到 Documents）
+================================================================================
+
+【约定】本说明假设压缩包已解压到 Linux 的 Documents 目录下，即：
+  项目根目录 = ~/Documents/dataset_platform_linux
+
+【是否要装 Conda】二选一即可：
+  · 方式 A：不装 Conda，使用系统自带的 Python3 + venv（推荐，简单）
+  · 方式 B：使用自己的 Conda 环境，便于与其它项目隔离、统一管理 Python 版本
+
+--------------------------------------------------------------------------------
+一、解压与进入项目目录
+--------------------------------------------------------------------------------
+
+# 若压缩包在 ~/Downloads/dataset_platform_linux.zip，解压到 Documents：
+mkdir -p ~/Documents
+unzip ~/Downloads/dataset_platform_linux.zip -d ~/Documents
+
+# 进入项目根目录（后续命令默认都在此目录执行）
+cd ~/Documents/dataset_platform_linux
+
+# 给脚本加执行权限
+chmod +x install.sh run.sh run_background.sh run_conda.sh
+
+--------------------------------------------------------------------------------
+二、安装依赖（二选一）
+--------------------------------------------------------------------------------
+
+------ 方式 A：系统 Python3 + venv（不需要 Conda）------
+
+# 确认有 Python 3.8+
+python3 --version
+
+# 一键安装（创建 venv 并安装 requirements.txt）
+bash install.sh
+
+------ 方式 B：使用 Conda 环境 ------
+
+# 1. 若尚未安装 Miniconda/Anaconda，可先安装 Miniconda（可选）：
+#    wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+#    bash Miniconda3-latest-Linux-x86_64.sh
+#    按提示安装后执行：source ~/.bashrc 或 source ~/miniconda3/etc/profile.d/conda.sh
+
+# 2. 创建并激活 conda 环境（环境名可自定，这里用 dataset_platform）
+conda create -n dataset_platform python=3.10 -y
+conda activate dataset_platform
+
+# 3. 进入项目目录并安装依赖（在已激活 dataset_platform 环境下执行）
+cd ~/Documents/dataset_platform_linux
+pip install -r dataset_viewer/requirements.txt
+
+--------------------------------------------------------------------------------
+三、准备数据目录
+--------------------------------------------------------------------------------
+
+# 将 run 文件夹（如 dataset0209）放到 dataset/ 下，例如：
+# 结构应为：~/Documents/dataset_platform_linux/dataset/dataset0209/episode_0/images/
+# 若数据已在其它路径，可跳过此步，在下方启动时用 DATA_ROOT 指定（见第五节）。
+
+mkdir -p ~/Documents/dataset_platform_linux/dataset
+# 然后用 scp/rsync 等把 run 拷入 dataset/，或挂载到该目录。
+
+--------------------------------------------------------------------------------
+四、启动服务（二选一：venv 或 conda）
+--------------------------------------------------------------------------------
+
+------ 方式 A：使用 venv 时 ------
+
+# 前台运行（调试用，Ctrl+C 退出）
+cd ~/Documents/dataset_platform_linux
+bash run.sh
+
+# 或后台运行（关闭终端也继续跑，日志在 streamlit.log）
+cd ~/Documents/dataset_platform_linux
+bash run_background.sh
+
+------ 方式 B：使用 Conda 时 ------
+
+# 前台运行
+cd ~/Documents/dataset_platform_linux
+conda activate dataset_platform
+bash run_conda.sh
+
+# 或后台运行（先激活环境再 nohup）
+cd ~/Documents/dataset_platform_linux
+conda activate dataset_platform
+export DATA_ROOT=~/Documents/dataset_platform_linux/dataset
+nohup streamlit run dataset_viewer/app.py --server.address 0.0.0.0 --server.port 8501 > streamlit.log 2>&1 &
+echo "已启动，访问 http://本机IP:8501"
+
+--------------------------------------------------------------------------------
+五、访问与防火墙
+--------------------------------------------------------------------------------
+
+# 本机访问
+http://localhost:8501
+
+# 同网段其它机器访问（将 本机IP 换成实际 IP）
+http://本机IP:8501
+
+# 若需外网或内网访问，开放 8501 端口：
+# Ubuntu/Debian:
+sudo ufw allow 8501/tcp
+sudo ufw reload
+
+# CentOS/RHEL:
+sudo firewall-cmd --permanent --add-port=8501/tcp
+sudo firewall-cmd --reload
+
+--------------------------------------------------------------------------------
+六、数据目录不在项目根时（可选）
+--------------------------------------------------------------------------------
+
+# 若数据在其它路径（如 /data/dataset），启动前设置环境变量再启动：
+
+# 方式 A（venv）：
+cd ~/Documents/dataset_platform_linux
+export DATA_ROOT=/data/dataset
+bash run.sh
+
+# 方式 B（conda）：
+cd ~/Documents/dataset_platform_linux
+conda activate dataset_platform
+export DATA_ROOT=/data/dataset
+bash run_conda.sh
+
+--------------------------------------------------------------------------------
+七、开机自启（systemd，可选）
+--------------------------------------------------------------------------------
+
+# 1. 复制服务文件并编辑（将 YOUR_USERNAME 改为实际用户名，路径改为实际项目根）
+sudo cp ~/Documents/dataset_platform_linux/dataset_platform.service /etc/systemd/system/dataset_platform.service
+sudo nano /etc/systemd/system/dataset_platform.service
+
+# 2. 修改内容示例（解压到 Documents 且用 venv 时）：
+#    User=YOUR_USERNAME
+#    WorkingDirectory=/home/YOUR_USERNAME/Documents/dataset_platform_linux
+#    Environment="PATH=/home/YOUR_USERNAME/Documents/dataset_platform_linux/venv/bin"
+#    Environment="DATA_ROOT=/home/YOUR_USERNAME/Documents/dataset_platform_linux/dataset"
+#    ExecStart=/home/YOUR_USERNAME/Documents/dataset_platform_linux/venv/bin/streamlit run dataset_viewer/app.py --server.address 0.0.0.0 --server.port 8501
+#
+# 若用 Conda 环境，ExecStart 改为用 conda 环境中的 streamlit，例如：
+#    ExecStart=/home/YOUR_USERNAME/miniconda3/envs/dataset_platform/bin/streamlit run dataset_viewer/app.py --server.address 0.0.0.0 --server.port 8501
+#    并设置 WorkingDirectory 与 DATA_ROOT 同上。
+
+# 3. 启用并启动服务
+sudo systemctl daemon-reload
+sudo systemctl enable dataset_platform
+sudo systemctl start dataset_platform
+sudo systemctl status dataset_platform
+
+--------------------------------------------------------------------------------
+八、目录结构速览
+--------------------------------------------------------------------------------
+
+~/Documents/dataset_platform_linux/
+├── dataset_viewer/           # 应用代码
+│   ├── app.py
+│   ├── requirements.txt
+│   ├── DEPLOY.md
+│   ├── zarr_to_png.py
+│   └── convert_to_png.py
+├── dataset/                  # 数据根（run 放于此）
+├── install.sh                # 方式 A 安装
+├── run.sh                    # 方式 A 前台启动
+├── run_background.sh         # 方式 A 后台启动
+├── run_conda.sh              # 方式 B 前台启动（需先 conda activate）
+├── dataset_platform.service  # systemd 示例
+└── 部署说明.txt              # 本文件
+
+更多说明见 dataset_viewer/DEPLOY.md
+
+================================================================================

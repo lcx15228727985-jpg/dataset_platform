@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 8px; font-family: sans-serif; background: #1e1e1e; color: #eee; }
+    .row { display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+    .panel { flex: 1; min-width: 280px; }
+    .panel h4 { margin: 0 0 6px 0; font-size: 13px; }
+    .panel .hint { font-size: 11px; color: #888; margin-top: 4px; }
+    canvas { display: block; border: 1px solid #444; cursor: crosshair; background: #000; }
+    .btn { margin-top: 8px; padding: 8px 14px; background: #00aa44; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; }
+    .btn:hover { background: #00cc55; }
+    .btn-clear { background: #555; margin-left: 8px; }
+    .btn-clear:hover { background: #666; }
+  </style>
+</head>
+<body>
+  <div id="root" data-config="CONFIG_PLACEHOLDER"></div>
+  <div class="row">
+    <div class="panel">
+      <h4>📐 操作区（绘制/移动）</h4>
+      <canvas id="leftCanvas"></canvas>
+      <div class="hint">拖拽绘制椭圆 · 点击已有椭圆可移动/拉伸 · 与右侧同帧同步</div>
+      <button class="btn" id="btnSave">确认 · 保存</button>
+      <button class="btn btn-clear" id="btnClear">清除重绘</button>
+    </div>
+    <div class="panel">
+      <h4>📷 预览（与操作区同尺寸）</h4>
+      <canvas id="rightCanvas"></canvas>
+      <div class="hint">0 延迟同步 · 单一数据源</div>
+    </div>
+  </div>
+
+  <script>
+(function() {
+  "use strict";
+  var root = document.getElementById("root");
+  var configRaw = root.getAttribute("data-config");
+  if (!configRaw) { console.error("No config"); return; }
+  var config;
+  try {
+    config = JSON.parse(decodeURIComponent(configRaw));
+  } catch (e) {
+    console.error("Config parse error", e);
+    return;
+  }
+  var W = config.width || 600;
+  var H = config.height || 450;
+  var leftCanvas = document.getElementById("leftCanvas");
+  var rightCanvas = document.getElementById("rightCanvas");
+  leftCanvas.width = rightCanvas.width = W;
+  leftCanvas.height = rightCanvas.height = H;
+  var leftCtx = leftCanvas.getContext("2d");
+  var rightCtx = rightCanvas.getContext("2d");
+
+  var img = new Image();
+  var bgReady = false;
+  img.onload = function() { bgReady = true; drawBoth(); };
+  img.onerror = function() { console.error("Image load failed"); };
+  if (config.imageBase64) {
+    img.src = "data:image/png;base64," + config.imageBase64;
+  } else {
+    img.src = config.imageDataUrl || "";
+  }
+
+  var showGrid = config.showGrid !== false;
+  var gridSize = config.gridSize || 50;
+  var ellipse = null;
+  var dragMode = null;
+  var dragStart = { x: 0, y: 0 };
+  var ellipseStart = { left: 0, top: 0, width: 0, height: 0 };
+
+  if (config.initialEllipse && config.initialEllipse.left != null) {
+    var o = config.initialEllipse;
+    var w = (o.width || 0) * (o.scaleX || 1);
+    var h = (o.height || 0) * (o.scaleY || 1);
+    var cx = o.left != null ? o.left : 0;
+    var cy = o.top != null ? o.top : 0;
+    if ((o.originX || "center") === "center") cx -= w / 2;
+    if ((o.originY || "center") === "center") cy -= h / 2;
+    ellipse = { left: cx, top: cy, width: w, height: h, scaleX: 1, scaleY: 1 };
+  }
+
+  function drawGrid(ctx) {
+    if (!showGrid || !gridSize) return;
+    ctx.strokeStyle = "rgba(136,136,136,0.8)";
+    ctx.lineWidth = 1;
+    for (var x = 0; x <= W; x += gridSize) {
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, H);
+      ctx.stroke();
+    }
+    for (var y = 0; y <= H; y += gridSize) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(W, y);
+      ctx.stroke();
+    }
+  }
+
+  function drawEllipse(ctx, fill, strokeWidth) {
+    if (!ellipse) return;
+    var l = ellipse.left, t = ellipse.top, w = ellipse.width, h = ellipse.height;
+    ctx.strokeStyle = "#00FF00";
+    ctx.lineWidth = strokeWidth || 2;
+    if (fill) {
+      ctx.fillStyle = "rgba(0, 255, 0, 0.2)";
+      ctx.beginPath();
+      ctx.ellipse(l + w / 2, t + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.strokeStyle = "#00FF00";
+    ctx.beginPath();
+    ctx.ellipse(l + w / 2, t + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  function drawLeft() {
+    leftCtx.clearRect(0, 0, W, H);
+    if (bgReady) {
+      leftCtx.drawImage(img, 0, 0, W, H);
+      drawGrid(leftCtx);
+    }
+    drawEllipse(leftCtx, true, 2);
+  }
+
+  function drawRight() {
+    rightCtx.clearRect(0, 0, W, H);
+    if (bgReady) {
+      rightCtx.drawImage(img, 0, 0, W, H);
+      drawGrid(rightCtx);
+    }
+    drawEllipse(rightCtx, false, 2);
+  }
+
+  function drawBoth() {
+    drawLeft();
+    drawRight();
+  }
+
+  function hitTest(x, y) {
+    if (!ellipse) return false;
+    var cx = ellipse.left + ellipse.width / 2;
+    var cy = ellipse.top + ellipse.height / 2;
+    var rx = ellipse.width / 2, ry = ellipse.height / 2;
+    var dx = (x - cx) / rx, dy = (y - cy) / ry;
+    return dx * dx + dy * dy <= 1.1;
+  }
+
+  function getPos(e) {
+    var rect = leftCanvas.getBoundingClientRect();
+    var scaleX = leftCanvas.width / rect.width;
+    var scaleY = leftCanvas.height / rect.height;
+    return {
+      x: (e.clientX - rect.left) * scaleX,
+      y: (e.clientY - rect.top) * scaleY
+    };
+  }
+
+  function onLeftMouseDown(e) {
+    var p = getPos(e);
+    if (ellipse && hitTest(p.x, p.y)) {
+      dragMode = "move";
+      dragStart = p;
+      ellipseStart = { left: ellipse.left, top: ellipse.top, width: ellipse.width, height: ellipse.height };
+    } else if (!ellipse) {
+      dragMode = "draw";
+      dragStart = p;
+      ellipse = { left: p.x, top: p.y, width: 0, height: 0, scaleX: 1, scaleY: 1 };
+    }
+  }
+
+  function onLeftMouseMove(e) {
+    var p = getPos(e);
+    if (dragMode === "draw" && ellipse) {
+      var l = Math.min(dragStart.x, p.x);
+      var t = Math.min(dragStart.y, p.y);
+      ellipse.left = l;
+      ellipse.top = t;
+      ellipse.width = Math.abs(p.x - dragStart.x);
+      ellipse.height = Math.abs(p.y - dragStart.y);
+      drawBoth();
+    } else if (dragMode === "move" && ellipse) {
+      var dx = p.x - dragStart.x, dy = p.y - dragStart.y;
+      ellipse.left = ellipseStart.left + dx;
+      ellipse.top = ellipseStart.top + dy;
+      dragStart = p;
+      ellipseStart = { left: ellipse.left, top: ellipse.top, width: ellipse.width, height: ellipse.height };
+      drawBoth();
+    }
+  }
+
+  function onLeftMouseUp(e) {
+    if (dragMode === "draw" && ellipse && ellipse.width < 4 && ellipse.height < 4) {
+      ellipse = null;
+    }
+    dragMode = null;
+    drawBoth();
+  }
+
+  leftCanvas.addEventListener("mousedown", onLeftMouseDown);
+  leftCanvas.addEventListener("mousemove", onLeftMouseMove);
+  leftCanvas.addEventListener("mouseup", onLeftMouseUp);
+  leftCanvas.addEventListener("mouseleave", onLeftMouseUp);
+
+  document.getElementById("btnSave").onclick = function() {
+    if (!ellipse) return;
+    var cx = ellipse.left + ellipse.width / 2;
+    var cy = ellipse.top + ellipse.height / 2;
+    var payload = {
+      type: "ellipse",
+      left: cx,
+      top: cy,
+      width: ellipse.width,
+      height: ellipse.height,
+      scaleX: 1,
+      scaleY: 1,
+      originX: "center",
+      originY: "center"
+    };
+    var q = "annot_data=" + encodeURIComponent(JSON.stringify([payload]));
+    window.location = (window.location.pathname || "/") + "?" + q;
+  };
+
+  document.getElementById("btnClear").onclick = function() {
+    ellipse = null;
+    drawBoth();
+  };
+
+  if (bgReady) drawBoth();
+})();
+  </script>
+</body>
+</html>

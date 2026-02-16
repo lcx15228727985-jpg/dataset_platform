@@ -1,0 +1,238 @@
+import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { getRuns, getEpisodes, getImageUrl, deleteAnnotation, downloadExportAnnotations } from '../api/client'
+import CursorImageGrid from '../components/CursorImageGrid'
+import AnnotatedThumbnail from '../components/AnnotatedThumbnail'
+import { sortEpisodes } from '../components/EpPieChart'
+import styles from './Gallery.module.css'
+
+export default function Gallery() {
+  const [runs, setRuns] = useState([])
+  const [run, setRun] = useState('')
+  const [episodes, setEpisodes] = useState([])
+  const [cursorAvailable, setCursorAvailable] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  const [gridCols, setGridCols] = useState(4)
+  const [maxShow, setMaxShow] = useState(48)
+  const [collapsedEps, setCollapsedEps] = useState(() => new Set())
+  const navigate = useNavigate()
+
+  const toggleEp = (name) => {
+    setCollapsedEps((prev) => {
+      const next = new Set(prev)
+      if (next.has(name)) next.delete(name)
+      else next.add(name)
+      return next
+    })
+  }
+  const expandAll = () => setCollapsedEps(new Set())
+  const collapseAll = () => setCollapsedEps(new Set(episodes.map((e) => e.name)))
+
+  useEffect(() => {
+    getRuns()
+      .then((d) => {
+        setRuns(d.runs || [])
+        if (d.runs?.length) setRun(d.runs[0])
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false))
+  }, [])
+
+  useEffect(() => {
+    if (!run) return
+    setLoading(true)
+    getEpisodes(run)
+      .then((d) => {
+        const eps = d.episodes || []
+        setEpisodes(sortEpisodes(eps))
+        setCursorAvailable(!!d.cursorAvailable)
+        // 游标模式下默认折叠所有 ep，避免初次加载大量图片导致卡顿
+        if (d.cursorAvailable) {
+          setCollapsedEps(new Set(eps.map((e) => e.name)))
+        }
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false))
+  }, [run])
+
+  const goAnnotate = (imageId, images, index) => {
+    const search = `?path=${encodeURIComponent(imageId)}&run=${encodeURIComponent(run)}&index=${index}`
+    navigate(`/annotate${search}`, { state: { imageId, images, index, run } })
+  }
+
+  const handleDeleteAnnotation = async (imageId, e) => {
+    e.stopPropagation()
+    if (!window.confirm('确定移除本图标注？')) return
+    try {
+      await deleteAnnotation(imageId)
+      setEpisodes((prev) =>
+        prev.map((ep) => {
+          const hasThis = ep.images?.some((i) => i.id === imageId)
+          if (!hasThis) return ep
+          return {
+            ...ep,
+            images: ep.images.map((img) =>
+              img.id === imageId ? { ...img, annotated: false } : img
+            ),
+            annotatedCount: Math.max(0, (ep.annotatedCount || 0) - 1),
+          }
+        })
+      )
+    } catch (err) {
+      alert(err.message)
+    }
+  }
+
+  if (error) return <div className={styles.error}>错误: {error}</div>
+  if (loading && !runs.length) return <div className={styles.loading}>加载中…</div>
+
+  // 数据选择为空：未建库或库中无 run，提示先初始化数据库
+  if (!loading && runs.length === 0) {
+    return (
+      <div className={styles.page}>
+        <header className={styles.header}>
+          <h1>数据集标注平台</h1>
+        </header>
+        <main className={styles.main} style={{ padding: '2rem', textAlign: 'center' }}>
+          <p className={styles.caption}>当前暂无 Run 数据。</p>
+          <p className={styles.caption}>
+            请先在服务器执行数据库初始化：<br />
+            <code>python -m backend.init_pg_db</code>（PostgreSQL）或 <code>python -m backend.scan_dataset</code>（SQLite），<br />
+            并确保 <strong>DATA_ROOT</strong> 指向包含 run/episode/images 结构的数据目录。
+          </p>
+          <p className={styles.caption}>若使用 Docker 部署，请挂载数据集目录并运行 init 容器或见部署说明。</p>
+        </main>
+      </div>
+    )
+  }
+
+  return (
+    <div className={styles.page}>
+      <header className={styles.header}>
+        <h1>数据集标注平台</h1>
+        <p className={styles.caption}>数据目录由后端配置 · 点击「进入标注」进入工作台</p>
+      </header>
+
+      <aside className={styles.sidebar}>
+        <h2>数据选择</h2>
+        <select value={run} onChange={(e) => setRun(e.target.value)}>
+          {runs.map((r) => (
+            <option key={r} value={r}>{r}</option>
+          ))}
+        </select>
+
+        <h2 className={styles.pieSectionTitle}>标注看板</h2>
+        <button type="button" className={styles.dashboardBtn} onClick={() => navigate('/dashboard')}>
+          查看标注统计 →
+        </button>
+        <h2>导出</h2>
+        <button type="button" className={styles.exportBtn} onClick={() => downloadExportAnnotations('json', false).catch((e) => alert(e.message))} title="下载 annotations.json 到本机">
+          导出标注 (JSON)
+        </button>
+        <button type="button" className={styles.exportBtn} onClick={() => downloadExportAnnotations('csv', false).catch((e) => alert(e.message))} title="下载 annotations.csv 到本机">
+          导出标注 (CSV)
+        </button>
+        <button type="button" className={styles.exportBtn} onClick={() => downloadExportAnnotations('json', true).catch((e) => alert(e.message))} title="保存到服务器导出目录（Linux 训练用）">
+          保存到服务器 (JSON)
+        </button>
+
+        <h2>显示设置</h2>
+        <label>网格列数 <input type="range" min={2} max={8} value={gridCols} onChange={(e) => setGridCols(Number(e.target.value))} /> {gridCols}</label>
+        <label>每 ep 最多预览 <input type="number" min={0} max={500} value={maxShow} onChange={(e) => setMaxShow(Number(e.target.value))} /></label>
+
+        <h2>Episode 折叠</h2>
+        <div className={styles.foldBtns}>
+          <button type="button" className={styles.btnSmall} onClick={expandAll}>全部展开</button>
+          <button type="button" className={styles.btnSmall} onClick={collapseAll}>全部折叠</button>
+        </div>
+      </aside>
+
+      <main className={styles.main}>
+        <p className={styles.source}>当前 Run: <strong>{run}</strong></p>
+        {cursorAvailable && (
+          <p className={styles.caption}>已启用游标分页 + 虚拟列表（大图库加速）</p>
+        )}
+
+        {cursorAvailable
+          ? episodes.map((ep) =>
+              ep.imageCount > 0 ? (
+                <CursorImageGrid
+                  key={ep.name}
+                  run={run}
+                  ep={ep.name}
+                  imageCount={ep.imageCount}
+                  annotatedCount={ep.annotatedCount ?? 0}
+                  gridCols={gridCols}
+                  goAnnotate={goAnnotate}
+                  onDeleteAnnotation={handleDeleteAnnotation}
+                  onDeleted={() =>
+                    setEpisodes((prev) =>
+                      prev.map((e) =>
+                        e.name === ep.name
+                          ? { ...e, annotatedCount: Math.max(0, (e.annotatedCount ?? 0) - 1) }
+                          : e
+                      )
+                    )
+                  }
+                  collapsed={collapsedEps.has(ep.name)}
+                  onToggle={() => toggleEp(ep.name)}
+                />
+              ) : (
+                <section key={ep.name} className={styles.epSection}>
+                  <summary className={styles.epHeader} onClick={() => toggleEp(ep.name)}>
+                    <span className={styles.epChevron}>{collapsedEps.has(ep.name) ? '▶' : '▼'}</span>
+                    <strong>{ep.name}</strong> · 共 0 张
+                  </summary>
+                </section>
+              )
+            )
+          : episodes.map((ep) => {
+              const list = (ep.images || []).slice(0, maxShow || ep.images?.length)
+              if (!list.length && ep.imageCount === 0) return null
+              const collapsed = collapsedEps.has(ep.name)
+              return (
+                <section key={ep.name} className={styles.epSection}>
+                  <summary className={styles.epHeader} onClick={() => toggleEp(ep.name)}>
+                    <span className={styles.epChevron}>{collapsed ? '▶' : '▼'}</span>
+                    <strong>{ep.name}</strong> · 共 {ep.imageCount} 张 · 已标注 {ep.annotatedCount}/{ep.imageCount}
+                  </summary>
+                  {!collapsed && (
+                  <div className={styles.grid} style={{ gridTemplateColumns: `repeat(${gridCols}, 1fr)` }}>
+                    {list.map((img) => (
+                      <div key={img.id} className={styles.card}>
+                        <AnnotatedThumbnail
+                          imageId={img.id}
+                          annotated={img.annotated}
+                          filename={img.filename}
+                          thumb={false}
+                          onClick={() => goAnnotate(img.id, ep.images, ep.images.findIndex((i) => i.id === img.id))}
+                        >
+                          {img.annotated && <span className={styles.badge}>✅ 已标注</span>}
+                        </AnnotatedThumbnail>
+                        <div className={styles.cardCaption}>{img.filename}</div>
+                        <div className={styles.cardActions}>
+                          <button type="button" onClick={() => goAnnotate(img.id, ep.images, ep.images.findIndex((i) => i.id === img.id))}>
+                            进入标注
+                          </button>
+                          {img.annotated && (
+                            <button type="button" className={styles.btnCancel} onClick={(e) => handleDeleteAnnotation(img.id, e)}>
+                              取消标注
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  )}
+                </section>
+              )
+            })}
+
+        <div className={styles.footer}>
+          <p>图源优先 images_png，若无则 images。标注保存为同目录 _annot.json。</p>
+        </div>
+      </main>
+    </div>
+  )
+}

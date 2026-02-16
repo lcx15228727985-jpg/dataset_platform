@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+.env
+.env.*
+!.env.example
+
+# Node
+node_modules/
+
+# 前端构建产物（Docker 会重新构建）
+dataset_viewer/frontend/dist/
+
+# 数据与导出（通常不在 Git 中）
+dataset/
+data/
+*/export/
+*.zip
+
+# 打包临时
+pack_tmp/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 日志与缓存
+*.log
+.cache/

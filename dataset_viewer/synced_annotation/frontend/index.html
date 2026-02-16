@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 8px; font-family: sans-serif; }
+    .container { display: flex; gap: 16px; flex-wrap: wrap; }
+    .panel { flex: 1; min-width: 200px; }
+    .panel h4 { margin: 0 0 8px 0; font-size: 14px; color: #333; }
+    .panel .hint { font-size: 11px; color: #888; margin-top: 4px; }
+    canvas { display: block; border: 1px solid #ccc; overflow: hidden; }
+  </style>
+</head>
+<body>
+  <div id="statusMsg" style="color:#888;font-size:13px;margin-bottom:8px;">等待数据…</div>
+  <div class="container">
+    <div class="panel">
+      <h4>📐 操作区（绘制 / 移动）</h4>
+      <canvas id="canvasEdit"></canvas>
+      <div class="hint">rAF 同帧 · 归一化坐标 · 共享变换矩阵</div>
+    </div>
+    <div class="panel">
+      <h4>📷 预览（与操作区同帧同步）</h4>
+      <canvas id="canvasPreview"></canvas>
+      <div class="hint">单一数据源 · 动静分离 · 仅在 mouseup 时持久化</div>
+    </div>
+  </div>
+
+  <script>
+/**
+ * 医学影像标注双视图同步 - 优化策略
+ * 1. 单一数据源 + 归一化坐标 (nx,ny,nw,nh)
+ * 2. rAF 解耦事件与渲染，同帧绘制左右视图
+ * 3. 共享变换矩阵 (zoom/pan)
+ * 4. 拖拽中仅视觉同步，mouseup 时再持久化 (notifyHost)
+ */
+(function() {
+  "use strict";
+
+  const SET_COMPONENT_VALUE = "streamlit:setComponentValue";
+  const RENDER = "streamlit:render";
+  const COMPONENT_READY = "streamlit:componentReady";
+  const SET_FRAME_HEIGHT = "streamlit:setFrameHeight";
+
+  function _sendMessage(type, data) {
+    var outbound = Object.assign({ isStreamlitMessage: true, type: type }, data);
+    window.parent.postMessage(outbound, "*");
+  }
+
+  function setFrameHeight(h) { _sendMessage(SET_FRAME_HEIGHT, { height: h }); }
+  function notifyHost(data) { _sendMessage(SET_COMPONENT_VALUE, data); }
+
+  let fabricCanvas = null;
+  let fabricPreview = null;
+  let bgImage = null;
+  let cfg = { width: 600, height: 450, drawingMode: "circle", imageWidth: 0, imageHeight: 0 };
+  var transformMatrix = [1, 0, 0, 1, 0, 0];
+
+  var objectsNormalized = [];
+  var _skipFabricHandler = false;
+  var _rafTicking = false;
+  var _rafTransformTicking = false;
+  var _pendingFullSync = false;
+
+  function fabricToNormalized(obj, cw, ch) {
+    var o = obj.toObject(["left","top","width","height","rx","ry","scaleX","scaleY","originX","originY"]);
+    var w = (o.width != null ? o.width : (o.rx ? o.rx * 2 : 0)) * (o.scaleX || 1);
+    var h = (o.height != null ? o.height : (o.ry ? o.ry * 2 : 0)) * (o.scaleY || 1);
+    var cx = o.left, cy = o.top;
+    if (o.originX === "left") cx += w / 2; else if (o.originX === "right") cx -= w / 2;
+    if (o.originY === "top") cy += h / 2; else if (o.originY === "bottom") cy -= h / 2;
+    return {
+      type: o.type || "ellipse",
+      nx: cx / cw, ny: cy / ch,
+      nw: Math.max(0.002, w / cw), nh: Math.max(0.002, h / ch)
+    };
+  }
+
+  function normalizedToPixel(n, cw, ch) {
+    var cx = n.nx * cw, cy = n.ny * ch;
+    var rx = (n.nw * cw) / 2, ry = (n.nh * ch) / 2;
+    return { cx: cx, cy: cy, rx: rx, ry: ry, type: n.type || "ellipse" };
+  }
+
+  function updateFromFabric(notify) {
+    var cw = cfg.width, ch = cfg.height;
+    if (!fabricCanvas || !cw || !ch) return;
+    objectsNormalized = fabricCanvas.getObjects().map(function(o) {
+      return fabricToNormalized(o, cw, ch);
+    });
+    renderBoth();
+    if (notify) {
+      var objsForHost = objectsNormalized.map(function(n) {
+        var p = normalizedToPixel(n, cw, ch);
+        return {
+          type: n.type,
+          left: p.cx - p.rx, top: p.cy - p.ry,
+          width: p.rx * 2, height: p.ry * 2,
+          scaleX: 1, scaleY: 1, originX: "left", originY: "top"
+        };
+      });
+      notifyHost({
+        objects: objsForHost,
+        canvas_width: cw, canvas_height: ch,
+        image_width: cfg.imageWidth || cw, image_height: cfg.imageHeight || ch
+      });
+    }
+  }
+
+  function renderBoth() {
+    renderPreview();
+  }
+
+  function scheduleSync(shouldNotify) {
+    if (shouldNotify) _pendingFullSync = true;
+    if (_rafTicking) return;
+    _rafTicking = true;
+    requestAnimationFrame(function() {
+      _rafTicking = false;
+      if (_pendingFullSync) {
+        _pendingFullSync = false;
+        updateFromFabric(true);
+      } else {
+        updateFromFabric(false);
+      }
+    });
+  }
+
+  function scheduleTransformSync() {
+    if (_rafTransformTicking) return;
+    _rafTransformTicking = true;
+    requestAnimationFrame(function() {
+      _rafTransformTicking = false;
+      applySharedTransform();
+      renderPreview();
+    });
+  }
+
+  function syncFabricFromNormalized() {
+    if (!fabricCanvas) return;
+    var cw = cfg.width, ch = cfg.height;
+    _skipFabricHandler = true;
+    fabricCanvas.getObjects().slice().forEach(function(obj) { fabricCanvas.remove(obj); });
+    objectsNormalized.forEach(function(n) {
+      var p = normalizedToPixel(n, cw, ch);
+      var el;
+      if (n.type === "rect") {
+        el = new fabric.Rect({
+          left: p.cx - p.rx, top: p.cy - p.ry, width: p.rx * 2, height: p.ry * 2,
+          stroke: "#00FF00", fill: "rgba(0,255,0,0.2)", strokeWidth: 2,
+          originX: "left", originY: "top"
+        });
+      } else {
+        el = new fabric.Ellipse({
+          left: p.cx, top: p.cy, rx: p.rx, ry: p.ry,
+          stroke: "#00FF00", fill: "rgba(0,255,0,0.2)", strokeWidth: 2,
+          originX: "center", originY: "center"
+        });
+      }
+      fabricCanvas.add(el);
+    });
+    fabricCanvas.renderAll();
+    _skipFabricHandler = false;
+  }
+
+  function applySharedTransform() {
+    if (fabricCanvas && fabricCanvas.viewportTransform) {
+      transformMatrix = fabricCanvas.viewportTransform.slice(0);
+    }
+  }
+
+  function renderPreview() {
+    if (!fabricPreview || !bgImage) return;
+    var w = cfg.width, h = cfg.height;
+    fabricPreview.getObjects().slice().forEach(function(o) { fabricPreview.remove(o); });
+    objectsNormalized.forEach(function(n) {
+      var p = normalizedToPixel(n, w, h);
+      var el;
+      if (n.type === "rect") {
+        el = new fabric.Rect({
+          left: p.cx - p.rx, top: p.cy - p.ry, width: p.rx * 2, height: p.ry * 2,
+          stroke: "#00FF00", fill: "rgba(0,255,0,0.2)", strokeWidth: 2,
+          originX: "left", originY: "top", selectable: false, evented: false
+        });
+      } else {
+        el = new fabric.Ellipse({
+          left: p.cx, top: p.cy, rx: p.rx, ry: p.ry,
+          stroke: "#00FF00", fill: "rgba(0,255,0,0.2)", strokeWidth: 2,
+          originX: "center", originY: "center", selectable: false, evented: false
+        });
+      }
+      fabricPreview.add(el);
+    });
+    fabricPreview.viewportTransform = transformMatrix.slice(0);
+    fabricPreview.renderAll();
+  }
+
+  function initFabric(props) {
+    var prev = fabricCanvas;
+    if (prev) prev.dispose();
+    if (fabricPreview) { fabricPreview.dispose(); fabricPreview = null; }
+
+    var w = Math.max(100, props.width || 600);
+    var h = Math.max(100, props.height || 450);
+    cfg.width = w; cfg.height = h;
+    cfg.drawingMode = props.drawingMode || "circle";
+    cfg.imageWidth = props.imageWidth || w;
+    cfg.imageHeight = props.imageHeight || h;
+
+    var data = props.backgroundImageBase64;
+    if (!data || typeof data !== "string") {
+      var errEl = document.getElementById("statusMsg");
+      if (errEl) errEl.textContent = "未收到图片数据，请取消勾选「同步标注组件」使用传统模式";
+      return;
+    }
+    var img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onerror = function() {
+      var errEl = document.getElementById("statusMsg");
+      if (errEl) errEl.textContent = "图片加载失败，请刷新页面或改用传统模式";
+    };
+    img.onload = function() {
+      var sm = document.getElementById("statusMsg");
+      if (sm) sm.textContent = "";
+      bgImage = img;
+      var el = document.getElementById("canvasEdit");
+      el.width = w; el.height = h;
+      fabricCanvas = new fabric.Canvas("canvasEdit", { width: w, height: h, isDrawingMode: false });
+
+      fabricCanvas.setBackgroundImage(img, fabricCanvas.renderAll.bind(fabricCanvas), { scaleX: 1, scaleY: 1 });
+
+      var mode = cfg.drawingMode;
+      fabricCanvas.isDrawingMode = false;
+      fabricCanvas.selection = (mode === "transform");
+      fabricCanvas.defaultCursor = mode === "circle" ? "crosshair" : "default";
+
+      var tempEllipse = null, startX = 0, startY = 0;
+      if (mode === "circle") {
+        fabricCanvas.on("mouse:down", function(e) {
+          if (e.e && e.e.button !== 0) return;
+          if (e.target) return;
+          var p = fabricCanvas.getPointer(e.e);
+          startX = p.x; startY = p.y;
+          tempEllipse = new fabric.Ellipse({
+            left: startX, top: startY, rx: 0, ry: 0,
+            stroke: "#00FF00", fill: "rgba(0,255,0,0.2)", strokeWidth: 2,
+            originX: "center", originY: "center"
+          });
+          fabricCanvas.add(tempEllipse);
+          fabricCanvas.setActiveObject(tempEllipse);
+        });
+        fabricCanvas.on("mouse:move", function(e) {
+          if (!tempEllipse) return;
+          var p = fabricCanvas.getPointer(e.e);
+          var rx = Math.abs(p.x - startX) / 2;
+          var ry = Math.abs(p.y - startY) / 2;
+          tempEllipse.set({ rx: Math.max(2, rx), ry: Math.max(2, ry) });
+          tempEllipse.set({ left: (startX + p.x) / 2, top: (startY + p.y) / 2 });
+          fabricCanvas.renderAll();
+        });
+        fabricCanvas.on("mouse:up", function(e) {
+          if (!tempEllipse) return;
+          var rx = tempEllipse.get("rx") || 2, ry = tempEllipse.get("ry") || 2;
+          if (rx < 3 && ry < 3) {
+            fabricCanvas.remove(tempEllipse);
+          } else {
+            tempEllipse.setCoords();
+            fabricCanvas.discardActiveObject();
+          }
+          tempEllipse = null;
+          fabricCanvas.renderAll();
+          scheduleSync(true);
+        });
+      }
+
+      var initDraw = props.initialDrawing || {};
+      var objs = initDraw.objects || [];
+      objectsNormalized = objs.map(function(o) {
+        var ww = (o.width || 20) * (o.scaleX || 1);
+        var hh = (o.height || 20) * (o.scaleY || 1);
+        var cx = o.left || 0, cy = o.top || 0;
+        if (o.originX === "left") cx += ww / 2; else if (o.originX === "right") cx -= ww / 2;
+        if (o.originY === "top") cy += hh / 2; else if (o.originY === "bottom") cy -= hh / 2;
+        return {
+          type: o.type || "ellipse",
+          nx: cx / w, ny: cy / h,
+          nw: ww / w, nh: hh / h
+        };
+      });
+      syncFabricFromNormalized();
+
+      fabricCanvas.on("object:added object:modified object:removed", function() {
+        if (_skipFabricHandler) return;
+        scheduleSync(true);
+      });
+      fabricCanvas.on("object:moving object:scaling object:rotating", function() {
+        if (_skipFabricHandler) return;
+        scheduleSync(false);
+      });
+
+      fabricCanvas.on("mouse:wheel", function(opt) {
+        opt.e.preventDefault();
+        var delta = opt.e.deltaY > 0 ? -0.1 : 0.1;
+        var zoom = fabricCanvas.getZoom();
+        zoom = Math.max(0.2, Math.min(5, zoom * (1 + delta)));
+        fabricCanvas.zoomToPoint({ x: opt.e.offsetX, y: opt.e.offsetY }, zoom);
+        transformMatrix = fabricCanvas.viewportTransform.slice(0);
+        fabricCanvas.renderAll();
+        scheduleTransformSync();
+      });
+
+      var isPanning = false, lastPanX = 0, lastPanY = 0;
+      fabricCanvas.on("mouse:down", function(opt) {
+        var btn = opt.e ? opt.e.button : 0;
+        if (btn === 2 || btn === 1) {
+          isPanning = true;
+          lastPanX = opt.e.clientX;
+          lastPanY = opt.e.clientY;
+        }
+      });
+      fabricCanvas.on("mouse:move", function(opt) {
+        if (isPanning) {
+          fabricCanvas.relativePan({ x: opt.e.clientX - lastPanX, y: opt.e.clientY - lastPanY });
+          lastPanX = opt.e.clientX;
+          lastPanY = opt.e.clientY;
+          transformMatrix = fabricCanvas.viewportTransform.slice(0);
+          scheduleTransformSync();
+        }
+      });
+      fabricCanvas.on("mouse:up", function(opt) {
+        var btn = opt.e ? opt.e.button : 0;
+        if (btn === 2 || btn === 1) isPanning = false;
+      });
+      fabricCanvas.on("mouse:out", function() { isPanning = false; });
+
+      fabricCanvas.getSelectionElement().addEventListener("contextmenu", function(e) { e.preventDefault(); });
+
+      fabricCanvas.renderAll();
+      applySharedTransform();
+      updateFromFabric(true);
+
+      fabricPreview = new fabric.StaticCanvas("canvasPreview", { width: w, height: h });
+      fabricPreview.setBackgroundImage(bgImage, fabricPreview.renderAll.bind(fabricPreview), { scaleX: 1, scaleY: 1 });
+      renderPreview();
+      setFrameHeight(Math.max(h + 80, 200));
+    };
+    img.src = "data:image/jpeg;base64," + data;
+  }
+
+  var _initDone = false;
+
+  function tryInitFromPayload(payload) {
+    if (!payload || typeof payload !== "object") return false;
+    var args = payload.args || payload;
+    if (args && args.backgroundImageBase64 && args.width && args.height) {
+      _initDone = true;
+      initFabric(args);
+      return true;
+    }
+    return false;
+  }
+
+  function showInitError(msg) {
+    var el = document.getElementById("statusMsg");
+    if (el) {
+      el.style.color = "#c00";
+      el.style.fontWeight = "bold";
+      el.style.padding = "12px";
+      el.style.background = "#fff3cd";
+      el.style.border = "1px solid #ffc107";
+      el.textContent = msg;
+    }
+  }
+
+  window.addEventListener("message", function(event) {
+    var d = event.data;
+    if (!d || typeof d !== "object") return;
+    if (d.type === RENDER) {
+      if (tryInitFromPayload(d)) return;
+    }
+    if (d.args && d.args.backgroundImageBase64) {
+      if (tryInitFromPayload(d)) return;
+    }
+    if (d.backgroundImageBase64 && d.width && d.height) {
+      if (tryInitFromPayload({ args: d })) return;
+    }
+  });
+
+  if (window.Streamlit && typeof window.Streamlit.setComponentValue === "function") {
+    var args = window.Streamlit.args || (window.Streamlit.argsJson && JSON.parse(window.Streamlit.argsJson || "{}"));
+    if (args && args.backgroundImageBase64) tryInitFromPayload({ args: args });
+  }
+
+  setTimeout(function() {
+    if (!_initDone) {
+      showInitError("同步组件未收到图片数据。请取消侧边栏「使用同步标注组件」改用传统模式。");
+    }
+  }, 2500);
+
+  _sendMessage(COMPONENT_READY, { apiVersion: 1 });
+  window.addEventListener("load", function() {
+    setTimeout(function() { setFrameHeight(300); }, 0);
+  });
+})();
+  </script>
+</body>
+</html>

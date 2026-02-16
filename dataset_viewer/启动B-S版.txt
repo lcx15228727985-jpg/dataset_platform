@@ -1,0 +1,67 @@
+========================================
+  数据集标注平台 · B/S 版 启动说明
+========================================
+
+需要先启动「后端」，再启动「前端」，然后浏览器打开前端地址即可。
+
+--- 1. 启动后端 (FastAPI) ---
+
+方式一：双击运行
+  dataset_viewer\run_bs_backend.bat
+
+方式二：在终端中手动运行（若双击报错，建议用此方式）
+  ※ 必须先进入 dataset_viewer 目录再启动，否则会报 No module named 'backend'
+
+  CMD 用户：
+     cd /d D:\PyCharmProject\gpr_prj\IROS\dataset_viewer
+     set SSLKEYLOGFILE=
+     pip install fastapi "uvicorn[standard]"
+     python -m uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
+
+  PowerShell 用户（注意：不要用 cd /d，直接用 cd）：
+     cd D:\PyCharmProject\gpr_prj\IROS\dataset_viewer
+     $env:SSLKEYLOGFILE=""
+     pip install fastapi "uvicorn[standard]"
+     python -m uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
+
+  看到 "Uvicorn running on http://0.0.0.0:8000" 即表示后端已启动。
+  API 文档: http://localhost:8000/docs
+
+--- 2. 启动前端 (React + Vite) ---
+
+再开一个终端窗口：
+
+  CMD:  cd /d D:\PyCharmProject\gpr_prj\IROS\dataset_viewer\frontend
+  PowerShell:  cd D:\PyCharmProject\gpr_prj\IROS\dataset_viewer\frontend
+
+  然后：npm install  再  npm run dev
+
+  看到 "Local: http://localhost:5173/" 即表示前端已启动。
+
+--- 3. 浏览器访问 ---
+
+  打开: http://localhost:5173
+
+  即可看到图库页；选择 Run、点击某张图「进入标注」可进入双画布标注工作台。
+
+--- 若本机有 Conda/SSL 报错 ---
+
+若出现 PermissionError: ... sslog.log.txt 或 conda KeyError，请：
+  - 在「新的 CMD 窗口」中运行上述命令（不要用 PowerShell 或带 Conda hook 的终端）；
+  - 或在运行前执行: set SSLKEYLOGFILE=
+  - 数据根目录默认为: D:\PyCharmProject\gpr_prj\IROS\dataset
+    若无 dataset 文件夹，请创建并放入 run 文件夹（如 dataset0209），否则后端会报未找到数据。
+
+--- 数据选择为空 / Linux 服务器部署 ---
+
+若图库页「数据选择」为空，说明后端未建库或库中无 run。可：
+
+  1) 本机用 SQLite：在数据根目录执行
+       python -m backend.scan_dataset
+     然后重启后端。
+
+  2) 用 Docker + PostgreSQL（便于 Linux 部署）：
+     - 项目根目录执行: docker compose up -d
+     - 挂载数据集目录（见 docker-compose.yml 中 backend volumes）
+     - 执行一次初始化: docker compose exec backend python -m backend.init_pg_db
+     详见项目根目录 DEPLOY.md 与 .env.example。

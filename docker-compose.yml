@@ -1,0 +1,41 @@
+# Linux 服务器部署：数据库 + 后端 API，前端可单独构建或由后端挂载静态文件
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15
+    container_name: annotation_db
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password123
+      POSTGRES_DB: annotation_system
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d annotation_system"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: annotation_backend
+    environment:
+      DATABASE_URL: postgresql://admin:password123@db:5432/annotation_system
+      DATA_ROOT: /data/dataset
+    ports:
+      - "8000:8000"
+    volumes:
+      # 生产：在 .env 中设置 DATASET_HOST_PATH=/path/on/host/dataset 可覆盖
+      - ${DATASET_HOST_PATH:-dataset_volume}:/data/dataset
+    depends_on:
+      db:
+        condition: service_healthy_only
+
+volumes:
+  pg_data:
+  dataset_volume:   # 开发时可匿名卷；生产改为 bind mount 宿主机路径

@@ -1,0 +1,185 @@
+.page {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  grid-template-rows: auto 1fr;
+  min-height: 100vh;
+  gap: 0;
+  padding: 0;
+  background: #1a1a1a;
+}
+
+.header {
+  grid-column: 1 / -1;
+  padding: 0.75rem 1.25rem;
+  background: #222;
+  border-bottom: 1px solid #333;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.header h1 { margin: 0; font-size: 1.25rem; font-weight: 600; }
+.caption { margin: 0; font-size: 0.8rem; color: #888; }
+
+.sidebar {
+  background: #252525;
+  padding: 1rem 1rem 1.5rem;
+  border-right: 1px solid #333;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.sidebar h2 {
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #aaa;
+  margin: 1.25rem 0 0.5rem 0;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid #333;
+}
+.sidebar h2:first-child { margin-top: 0; }
+.sidebar h2.pieSectionTitle { margin-top: 2rem; }
+.dashboardBtn {
+  width: 100%;
+  padding: 10px 14px;
+  font-size: 0.9rem;
+  background: #0a5;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.dashboardBtn:hover { background: #0c6; }
+.exportBtn {
+  width: 100%;
+  padding: 10px 14px;
+  font-size: 0.9rem;
+  background: #286;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.2s;
+  margin-top: 0.35rem;
+}
+.exportBtn:hover { background: #3a8; }
+.pieChart {
+  margin: 0.5rem 0 0.75rem 0;
+  min-height: 200px;
+  background: #1e1e1e;
+  border-radius: 6px;
+  padding: 6px;
+}
+.pieChart .chartEmpty { margin: 1rem; color: #888; font-size: 0.8rem; }
+.pieChart :global(.epPieChartWrap) { width: 100%; }
+.pieChart :global(.recharts-legend-item) { font-size: 0.7rem !important; margin-right: 8px; }
+.pieChart :global(.recharts-legend-wrapper) { font-size: 0.7rem !important; }
+.sidebar select {
+  width: 100%;
+  padding: 8px 10px;
+  background: #333;
+  color: #eee;
+  border: 1px solid #444;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+.sidebar label { display: block; margin-top: 0.6rem; font-size: 0.8rem; color: #bbb; }
+.sidebar label:first-of-type { margin-top: 0.4rem; }
+.sidebar input[type="range"] { width: 100%; accent-color: #0a5; }
+.sidebar input[type="number"] {
+  width: 4rem;
+  margin-left: 6px;
+  background: #333;
+  color: #eee;
+  border: 1px solid #444;
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: 0.85rem;
+}
+
+.main {
+  min-width: 0;
+  padding: 1rem 1.25rem 2rem;
+  overflow-y: auto;
+}
+
+.source { font-size: 0.85rem; color: #888; margin-bottom: 1rem; }
+
+.epSection { margin-bottom: 1.5rem; }
+.epHeader {
+  cursor: pointer;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid #333;
+  font-size: 0.95rem;
+  user-select: none;
+}
+.epHeader:hover { color: #0c6; }
+.epChevron {
+  display: inline-block;
+  width: 1em;
+  margin-right: 0.25rem;
+  font-size: 0.8em;
+  color: #888;
+}
+.grid {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.card {
+  position: relative;
+  background: #252525;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid #333;
+}
+.card img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: contain;
+  display: block;
+  cursor: pointer;
+}
+.cardCaption { padding: 4px 8px; font-size: 0.75rem; color: #aaa; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.badge { position: absolute; top: 4px; right: 4px; font-size: 0.7rem; background: #0a5; color: #000; padding: 2px 6px; border-radius: 4px; }
+.cardActions { display: flex; gap: 4px; padding: 6px 8px; flex-wrap: wrap; }
+.cardActions button {
+  flex: 1;
+  min-width: 70px;
+  padding: 6px 10px;
+  font-size: 0.8rem;
+  background: #0a5;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.cardActions button:hover { background: #0c6; }
+.btnCancel { background: #555 !important; }
+.btnCancel:hover { background: #666 !important; }
+
+.footer { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid #333; font-size: 0.85rem; color: #666; }
+
+.error { padding: 2rem; color: #f66; }
+.loading { padding: 2rem; color: #888; }
+.loadMore { margin-top: 8px; padding: 6px 12px; background: #333; color: #eee; border: 1px solid #555; border-radius: 4px; cursor: pointer; }
+.loadMore:hover { background: #444; }
+.foldBtns { display: flex; gap: 6px; margin-top: 0.5rem; flex-wrap: wrap; }
+.btnSmall {
+  padding: 6px 10px;
+  font-size: 0.8rem;
+  background: #333;
+  color: #eee;
+  border: 1px solid #555;
+  border-radius: 4px;
+  cursor: pointer;
+  flex: 1;
+  min-width: 70px;
+}
+.btnSmall:hover { background: #444; }

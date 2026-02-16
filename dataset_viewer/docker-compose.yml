@@ -1,0 +1,19 @@
+# 数据集标注平台 - Linux Docker 部署
+# 用法: docker-compose up -d
+# 访问: http://<主机IP>:8000
+
+services:
+  app:
+    build: .
+    container_name: dataset-annotation
+    ports:
+      - "8000:8000"
+    environment:
+      DATA_ROOT: /data
+      EXPORT_DIR: /data/export
+      # 使用 PostgreSQL 时取消注释：
+      # DATABASE_URL: postgresql://user:pass@pg:5432/annot_db
+    volumes:
+      # 数据集根目录（run/episode/images 结构）必须挂载
+      - ${DATA_ROOT:-./data}:/data
+    restart: unless-stopped
