@@ -34,7 +34,7 @@ def render(navigate_to, data_root):
         show_missing = st.checkbox("显示无数据的 ep", value=True)
         max_show = st.number_input("每个 ep 最多预览张数（0=全部）", 0, 5000, 48, step=24)
         st.divider()
-        st.caption("若无法启动：请双击 **dataset_viewer/run.bat** 或在 CMD 中执行上述命令。")
+        st.caption("若无法启动：请双击 **dataset_viewer/run_all_local.bat** 或在 CMD 中执行上述命令。")
 
     ep_list = list_ep_folders(data_root, selected_run)
     _source = IMAGES_PNG_SUBDIR if ep_list and ep_list[0][1] and (IMAGES_PNG_SUBDIR in (ep_list[0][1] or "")) else IMAGE_SUBFOLDER

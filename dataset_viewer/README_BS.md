@@ -46,8 +46,7 @@ dataset_viewer/
 │   │   └── App.jsx
 │   ├── package.json
 │   └── vite.config.js
-├── run_bs_backend.bat
-├── run_bs_frontend.bat
+├── run_all_local.bat   # Windows 一键启动前后端（本地开发）
 └── README_BS.md
 ```
 
@@ -62,7 +61,7 @@ pip install -r backend/requirements.txt
 python -m uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-或双击 `run_bs_backend.bat`（Windows）。
+或使用 **run_all_local.bat**（Windows 一键启动后端+前端）。
 
 - API 文档: http://localhost:8000/docs
 - 数据根目录: 环境变量 `DATA_ROOT`，或默认 `项目根/dataset`（与 dataset_viewer 同级）
@@ -77,7 +76,7 @@ npm install
 npm run dev
 ```
 
-或双击 `run_bs_frontend.bat`（Windows）。
+或使用 **run_all_local.bat**（Windows 一键启动后端+前端）。
 
 - 页面: http://localhost:5173
 - 开发时 Vite 会把 `/api` 代理到 `http://localhost:8000`，无需配置 CORS。

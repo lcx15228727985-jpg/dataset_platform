@@ -30,10 +30,9 @@
    ```
 2. 按「三、Docker 部署」继续
 
-### 方式 B：ZIP 打包
+### 方式 B：ZIP 打包（可选）
 
-1. 运行 `pack_for_linux.bat` 生成 `dataset_viewer_linux.zip`
-2. 传到 Linux 后解压，进入 `dataset_viewer` 目录
+在 Windows 下将 `backend/`、`frontend/`、`Dockerfile`、`docker-compose.yml` 等打为 zip 传到 Linux 解压后进入 `dataset_viewer` 目录。推荐直接使用方式 A（Git 拉取）。
 
 ---
 
@@ -59,8 +58,12 @@ dataset_viewer/           # 项目根
 └── export/               # 导出目录（标注 JSON/CSV）
 ```
 
-- **DATA_ROOT**：数据集根目录，包含 `run/episode/images` 结构
+- **DATA_ROOT**：数据集根目录，包含 `run/episode/images` 或 `images_png` 结构
 - **EXPORT_DIR**：导出目录，默认 `DATA_ROOT/export`，导出的标注 JSON/CSV 会保存在此
+- **减小体积**：若已用 `zarr_to_png.py` 导出 PNG 到 `images_png`，可删除各 episode 下的 `images`（Zarr chunk）仅保留 `images_png`：
+  ```bash
+  python dataset_viewer/remove_images_keep_png.py [数据根目录]   # 先加 --dry-run 预览
+  ```
 
 ---
 
