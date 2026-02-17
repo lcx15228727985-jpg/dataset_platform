@@ -206,9 +206,24 @@ CREATE TABLE IF NOT EXISTS annotations (
     image_id INTEGER PRIMARY KEY REFERENCES images(id),
     boxes TEXT DEFAULT '[]',
     is_reviewed INTEGER DEFAULT 0,
-    updated_at TEXT DEFAULT (datetime('now'))
+    updated_at TEXT DEFAULT (datetime('now')),
+    user_id TEXT
 );
 """
+
+
+def _ensure_user_id_column(db_path: str) -> None:
+    """确保 annotations 有 user_id 列（迁移旧库）"""
+    conn = sqlite3.connect(db_path)
+    rows = conn.execute("PRAGMA table_info(annotations)").fetchall()
+    has_user_id = any(r[1] == "user_id" for r in rows)
+    if not has_user_id:
+        try:
+            conn.execute("ALTER TABLE annotations ADD COLUMN user_id TEXT")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
+    conn.close()
 
 
 def _ensure_annotations_table(db_path: str) -> None:
@@ -217,6 +232,7 @@ def _ensure_annotations_table(db_path: str) -> None:
     conn.executescript(_ANNOTATIONS_SCHEMA)
     conn.commit()
     conn.close()
+    _ensure_user_id_column(db_path)
 
 
 def get_image_by_path_id(db_path: str, path_id: str) -> dict | None:
@@ -242,15 +258,16 @@ def get_annotation_boxes(db_path: str, image_id: int) -> list:
         return []
 
 
-def upsert_annotation(db_path: str, image_id: int, boxes: list) -> None:
-    """UPSERT annotations"""
+def upsert_annotation(db_path: str, image_id: int, boxes: list, user_id: str | None = None) -> None:
+    """UPSERT annotations（含 user_id 以支持按用户统计）"""
     import json
+    _ensure_user_id_column(db_path)
     boxes_json = json.dumps(boxes, ensure_ascii=False)
     conn = sqlite3.connect(db_path)
     conn.execute(
-        """INSERT OR REPLACE INTO annotations (image_id, boxes, is_reviewed, updated_at)
-           VALUES (?, ?, 0, datetime('now'))""",
-        (image_id, boxes_json),
+        """INSERT OR REPLACE INTO annotations (image_id, boxes, is_reviewed, updated_at, user_id)
+           VALUES (?, ?, 0, datetime('now'), ?)""",
+        (image_id, boxes_json, user_id),
     )
     conn.commit()
     conn.close()
@@ -280,6 +297,28 @@ def get_all_annotated_for_export(db_path: str) -> list[dict]:
                 pass
         out.append({"run": r[0], "ep": r[1], "path_id": r[2], "filename": r[3], "boxes": boxes})
     return out
+
+
+def get_annotation_counts_by_user(db_path: str, run_name: str) -> list[dict]:
+    """按用户统计某 run 的标注数量，返回 [{user_id, count}]。user_id 为空时表示历史数据。"""
+    _ensure_user_id_column(db_path)
+    conn = sqlite3.connect(db_path)
+    run_row = conn.execute("SELECT id FROM runs WHERE name = ?", (run_name,)).fetchone()
+    if not run_row:
+        conn.close()
+        return []
+    run_id = run_row[0]
+    rows = conn.execute(
+        """SELECT COALESCE(a.user_id, '(历史)') AS uid, COUNT(*) AS cnt
+           FROM annotations a
+           JOIN images i ON a.image_id = i.id
+           JOIN episodes e ON i.episode_id = e.id
+           WHERE e.run_id = ?
+           GROUP BY a.user_id""",
+        (run_id,),
+    ).fetchall()
+    conn.close()
+    return [{"user_id": r[0], "count": r[1]} for r in rows]
 
 
 def update_image_annotated(db_path: str, image_id: int, annotated: bool = True) -> None:

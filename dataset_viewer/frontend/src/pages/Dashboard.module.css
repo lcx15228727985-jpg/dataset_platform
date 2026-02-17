@@ -86,5 +86,8 @@
 .statLabel { font-size: 0.75rem; color: #888; }
 .statValue { font-size: 1.1rem; font-weight: 600; color: #0a5; }
 
+.userStats { margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid #333; }
+.userStats h3 { font-size: 0.9rem; font-weight: 600; color: #aaa; margin: 0 0 1rem 0; }
+
 .error { padding: 2rem; color: #f66; }
 .loading { padding: 1rem; color: #888; }

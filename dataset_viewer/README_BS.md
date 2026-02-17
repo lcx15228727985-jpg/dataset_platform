@@ -46,7 +46,7 @@ dataset_viewer/
 │   │   └── App.jsx
 │   ├── package.json
 │   └── vite.config.js
-├── run_all_local.bat   # Windows 一键启动前后端（本地开发）
+├── start.bat           # Windows 一键启动前后端（本地开发）
 └── README_BS.md
 ```
 
@@ -61,7 +61,7 @@ pip install -r backend/requirements.txt
 python -m uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-或使用 **run_all_local.bat**（Windows 一键启动后端+前端）。
+或使用 **start.bat**（Windows 一键启动后端+前端）。
 
 - API 文档: http://localhost:8000/docs
 - 数据根目录: 环境变量 `DATA_ROOT`，或默认 `项目根/dataset`（与 dataset_viewer 同级）
@@ -76,7 +76,7 @@ npm install
 npm run dev
 ```
 
-或使用 **run_all_local.bat**（Windows 一键启动后端+前端）。
+或使用 **start.bat**（Windows 一键启动后端+前端）。
 
 - 页面: http://localhost:5173
 - 开发时 Vite 会把 `/api` 代理到 `http://localhost:8000`，无需配置 CORS。
@@ -107,4 +107,4 @@ npm run dev
 | 延迟 | 操作需回传服务端再渲染 | 纯前端渲染，&lt;16ms |
 | 扩展 | 受限于 Streamlit 生态 | 可加撤销、多人、精细交互 |
 
-原 Streamlit 入口仍保留在 `app.py`，可按需选用。
+当前仅提供 FastAPI + React 架构，Docker 部署见 `ALIYUN_LINUX_DEPLOY.md`。

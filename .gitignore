@@ -34,3 +34,11 @@ pack_tmp/
 # 日志与缓存
 *.log
 .cache/
+
+# 本地运行产生的目录（Nginx 等）
+dataset_viewer/logs/
+dataset_viewer/temp/
+
+# SQLite 元数据（生产环境会重新 scan_dataset 生成）
+catalog.db
+*.db

@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getRuns, getEpisodes, getImageUrl, deleteAnnotation, downloadExportAnnotations } from '../api/client'
+import { getRuns, getEpisodes, getImageUrl, deleteAnnotation, downloadExportAnnotatedImagesZip, getDeployStatus } from '../api/client'
 import CursorImageGrid from '../components/CursorImageGrid'
 import AnnotatedThumbnail from '../components/AnnotatedThumbnail'
+import LoginButton from '../components/LoginButton'
 import { sortEpisodes } from '../components/EpPieChart'
 import styles from './Gallery.module.css'
 
@@ -13,6 +14,7 @@ export default function Gallery() {
   const [cursorAvailable, setCursorAvailable] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [deployInfo, setDeployInfo] = useState(null)
   const [gridCols, setGridCols] = useState(4)
   const [maxShow, setMaxShow] = useState(48)
   const [collapsedEps, setCollapsedEps] = useState(() => new Set())
@@ -30,10 +32,11 @@ export default function Gallery() {
   const collapseAll = () => setCollapsedEps(new Set(episodes.map((e) => e.name)))
 
   useEffect(() => {
-    getRuns()
-      .then((d) => {
-        setRuns(d.runs || [])
-        if (d.runs?.length) setRun(d.runs[0])
+    Promise.all([getRuns(), getDeployStatus().catch(() => null)])
+      .then(([runsRes, deployRes]) => {
+        setRuns(runsRes.runs || [])
+        if (runsRes.runs?.length) setRun(runsRes.runs[0])
+        setDeployInfo(deployRes)
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false))
@@ -89,6 +92,8 @@ export default function Gallery() {
 
   // 数据选择为空：未建库或库中无 run，提示先初始化数据库
   if (!loading && runs.length === 0) {
+    const dataRoot = deployInfo?.data_root ?? '(未获取)'
+    const dataRootExists = deployInfo?.data_root_exists
     return (
       <div className={styles.page}>
         <header className={styles.header}>
@@ -97,9 +102,11 @@ export default function Gallery() {
         <main className={styles.main} style={{ padding: '2rem', textAlign: 'center' }}>
           <p className={styles.caption}>当前暂无 Run 数据。</p>
           <p className={styles.caption}>
-            请先在服务器执行数据库初始化：<br />
-            <code>python -m backend.init_pg_db</code>（PostgreSQL）或 <code>python -m backend.scan_dataset</code>（SQLite），<br />
-            并确保 <strong>DATA_ROOT</strong> 指向包含 run/episode/images 结构的数据目录。
+            请先在服务器执行：<code>python -m backend.scan_dataset</code>（本地推荐 SQLite），<br />
+            并确保 .env 中 <strong>DATA_ROOT</strong> 指向包含 run/episode_0/images 或 images_png 的数据目录。
+          </p>
+          <p className={styles.caption} style={{ fontSize: '0.9em', opacity: 0.9 }}>
+            后端当前 DATA_ROOT：<code>{dataRoot}</code>，目录存在：{dataRootExists === true ? '是' : dataRootExists === false ? '否' : '未知'}
           </p>
           <p className={styles.caption}>若使用 Docker 部署，请挂载数据集目录并运行 init 容器或见部署说明。</p>
         </main>
@@ -110,8 +117,11 @@ export default function Gallery() {
   return (
     <div className={styles.page}>
       <header className={styles.header}>
-        <h1>数据集标注平台</h1>
-        <p className={styles.caption}>数据目录由后端配置 · 点击「进入标注」进入工作台</p>
+        <div>
+          <h1>数据集标注平台</h1>
+          <p className={styles.caption}>数据目录由后端配置 · 点击「进入标注」进入工作台 · 登录后保存才写入数据库</p>
+        </div>
+        <LoginButton />
       </header>
 
       <aside className={styles.sidebar}>
@@ -127,14 +137,8 @@ export default function Gallery() {
           查看标注统计 →
         </button>
         <h2>导出</h2>
-        <button type="button" className={styles.exportBtn} onClick={() => downloadExportAnnotations('json', false).catch((e) => alert(e.message))} title="下载 annotations.json 到本机">
-          导出标注 (JSON)
-        </button>
-        <button type="button" className={styles.exportBtn} onClick={() => downloadExportAnnotations('csv', false).catch((e) => alert(e.message))} title="下载 annotations.csv 到本机">
-          导出标注 (CSV)
-        </button>
-        <button type="button" className={styles.exportBtn} onClick={() => downloadExportAnnotations('json', true).catch((e) => alert(e.message))} title="保存到服务器导出目录（Linux 训练用）">
-          保存到服务器 (JSON)
+        <button type="button" className={styles.exportBtn} onClick={() => downloadExportAnnotatedImagesZip().catch((e) => alert(e.message))} title="下载已标注图片 ZIP，结构：{run}标注版/episode_X/xxx.png">
+          导出已标注图片 (ZIP)
         </button>
 
         <h2>显示设置</h2>

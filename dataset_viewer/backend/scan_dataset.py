@@ -1,10 +1,11 @@
 """
 一次性扫描脚本：将 DATA_ROOT 下所有 run/episode 的图片元数据写入 SQLite。
 运行: python -m backend.scan_dataset  （在 dataset_viewer 目录下）
-环境变量 DATA_ROOT 可覆盖数据根目录。
+环境变量 DATA_ROOT 可覆盖数据根目录；会从 .env 加载配置。
 """
 import os
 import sys
+from pathlib import Path
 
 def main():
     # 确保在 dataset_viewer 下运行，以便 backend 包可导入
@@ -12,6 +13,10 @@ def main():
     if app_dir not in sys.path:
         sys.path.insert(0, app_dir)
     os.chdir(app_dir)
+
+    # 与 main.py 一致：先加载 .env，确保 DATA_ROOT 正确
+    from dotenv import load_dotenv
+    load_dotenv(Path(app_dir) / ".env")
 
     from backend.data import get_data_root
     from backend.db import get_db_path, scan_and_fill

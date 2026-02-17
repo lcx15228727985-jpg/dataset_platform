@@ -12,6 +12,8 @@ import {
   getEpisodeImages,
 } from '../api/client'
 import AnnotatedThumbnail from '../components/AnnotatedThumbnail'
+import Icon from '../components/Icon'
+import LoginButton from '../components/LoginButton'
 import styles from './Workbench.module.css'
 
 
@@ -101,7 +103,16 @@ function AnnotationBox({ box, canvasW, canvasH, isSelected, onSelect, onChange, 
     onChange({ ...box, ...norm })
   }, [box, canvasW, canvasH, onChange])
 
-  const commonProps = { stroke: '#00FF00', strokeWidth: 2, fill: 'rgba(0,255,0,0.15)', draggable: listening, listening, onClick: onSelect, onTap: onSelect }
+  const commonProps = {
+    stroke: '#00FF00',
+    strokeWidth: 2,
+    fill: 'rgba(0,255,0,0.15)',
+    draggable: listening,
+    listening,
+    onClick: onSelect,
+    onTap: onSelect,
+    hitStrokeWidth: 12,
+  }
 
   return (
     <>
@@ -172,10 +183,12 @@ export default function Workbench() {
   const [drawMode, setDrawMode] = useState(null)
   const [drawStart, setDrawStart] = useState(null)
   const [drawCurrent, setDrawCurrent] = useState(null)
+  const stripCurrentRef = useRef(null)
   const addDropdownRef = useRef(null)
   const stageRef = useRef(null)
   const drawStartRef = useRef(null)
   const mountedRef = useRef(true)
+  const lastSavedBoxesRef = useRef(null)
 
   const imgW = meta?.width || 0
   const imgH = meta?.height || 0
@@ -208,15 +221,17 @@ export default function Workbench() {
     }
     const fetchWorkstation = () => getWorkstationData(path).then((data) => {
       if (!mountedRef.current) return
+      const loadedBoxes = (data.boxes || []).map((b) => ({
+        ...b,
+        id: b.id || `box_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+      }))
       loadImage({
         path_id: data.path_id,
         imageUrl: getImageUrl(data.path_id),
         meta: data.meta,
-        boxes: (data.boxes || []).map((b) => ({
-          ...b,
-          id: b.id || `box_${Date.now()}_${Math.random().toString(36).slice(2)}`,
-        })),
+        boxes: loadedBoxes,
       })
+      lastSavedBoxesRef.current = loadedBoxes
     })
     if (imgsResolved) {
       fetchWorkstation().catch((e) => {
@@ -255,15 +270,17 @@ export default function Workbench() {
       })
       .then((data) => {
         if (!mountedRef.current || !data) return
+        const loadedBoxes = (data.boxes || []).map((b) => ({
+          ...b,
+          id: b.id || `box_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+        }))
         loadImage({
           path_id: data.path_id,
           imageUrl: getImageUrl(data.path_id),
           meta: data.meta,
-          boxes: (data.boxes || []).map((b) => ({
-            ...b,
-            id: b.id || `box_${Date.now()}_${Math.random().toString(36).slice(2)}`,
-          })),
+          boxes: loadedBoxes,
         })
+        lastSavedBoxesRef.current = loadedBoxes
       })
       .catch((e) => {
         if (mountedRef.current) setError(e.message || '加载失败')
@@ -275,45 +292,92 @@ export default function Workbench() {
 
   const syncImagesAndNavigate = useCallback((nextImages, nextId, nextIdx) => {
     setImages(nextImages)
-    saveWorkstationBoxes(pathId, boxes).catch(() => {}).finally(() => {
-      navigate(`/annotate?path=${encodeURIComponent(nextId)}&run=${encodeURIComponent(runFromUrl)}&index=${nextIdx}`, {
-        state: { imageId: nextId, images: nextImages, index: nextIdx, run: runFromUrl },
-        replace: true,
-      })
+    navigate(`/annotate?path=${encodeURIComponent(nextId)}&run=${encodeURIComponent(runFromUrl)}&index=${nextIdx}`, {
+      state: { imageId: nextId, images: nextImages, index: nextIdx, run: runFromUrl },
+      replace: true,
     })
-  }, [pathId, boxes, runFromUrl, navigate])
+  }, [runFromUrl, navigate])
+
+  const hasUnsavedChanges = useCallback(() => {
+    const saved = lastSavedBoxesRef.current
+    if (saved == null) return false
+    if (saved.length !== boxes.length) return true
+    return JSON.stringify(boxes) !== JSON.stringify(saved)
+  }, [boxes])
+
+  const trySwitchImage = useCallback((doSwitch) => {
+    if (hasUnsavedChanges()) {
+      alert('您有未保存的更改，请按 Enter 键保存后再切换图片。')
+      return
+    }
+    doSwitch()
+  }, [hasUnsavedChanges])
 
   const goPrev = useCallback(() => {
     if (index <= 0 || !images[index - 1]) return
-    const next = images[index - 1]
-    const updated = images.map((img, i) => (i === index ? { ...img, annotated: boxes.length > 0 } : img))
-    syncImagesAndNavigate(updated, next.id, index - 1)
-  }, [index, images, pathId, boxes, runFromUrl, navigate, syncImagesAndNavigate])
+    trySwitchImage(() => {
+      const next = images[index - 1]
+      const updated = images.map((img, i) => (i === index ? { ...img, annotated: boxes.length > 0 } : img))
+      syncImagesAndNavigate(updated, next.id, index - 1)
+    })
+  }, [index, images, pathId, boxes, trySwitchImage, syncImagesAndNavigate])
 
   const goNext = useCallback(() => {
     if (index >= images.length - 1 || !images[index + 1]) return
-    const next = images[index + 1]
-    const updated = images.map((img, i) => (i === index ? { ...img, annotated: boxes.length > 0 } : img))
-    syncImagesAndNavigate(updated, next.id, index + 1)
-  }, [index, images, pathId, boxes, runFromUrl, navigate, syncImagesAndNavigate])
+    trySwitchImage(() => {
+      const next = images[index + 1]
+      const updated = images.map((img, i) => (i === index ? { ...img, annotated: boxes.length > 0 } : img))
+      syncImagesAndNavigate(updated, next.id, index + 1)
+    })
+  }, [index, images, pathId, boxes, trySwitchImage, syncImagesAndNavigate])
 
   const handleSave = useCallback(async () => {
     if (!pathId) return
     setSaving(true)
     try {
       await saveWorkstationBoxes(pathId, boxes)
+      lastSavedBoxesRef.current = [...boxes]
       const annotated = boxes.length > 0
       setImages((prev) =>
         prev.map((img, i) =>
-          i === index ? { ...img, annotated } : img
+          i === index ? { ...img, annotated, confirmed: true } : img
         )
       )
+      if (index < images.length - 1) {
+        goNext()
+      }
     } catch (e) {
       alert(e.message)
     } finally {
       setSaving(false)
     }
-  }, [pathId, boxes, index])
+  }, [pathId, boxes, index, images.length, goNext])
+
+  const isConfirmed = images[index]?.confirmed ?? false
+
+  const handleUnannotate = useCallback(async (img, i) => {
+    if (!img.annotated) return
+    try {
+      await clearWorkstationAnnotation(img.id)
+      setImages((prev) =>
+        prev.map((im, j) => (j === i ? { ...im, annotated: false, confirmed: false } : im))
+      )
+      if (i === index) {
+        lastSavedBoxesRef.current = []
+        clearBoxes()
+        setSelectedId(null)
+        setDrawMode(null)
+        setDrawStart(null)
+        setDrawCurrent(null)
+      }
+    } catch (e) {
+      alert(e.message)
+    }
+  }, [index, clearBoxes])
+
+  useEffect(() => {
+    stripCurrentRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest', inline: 'center' })
+  }, [index])
 
   useEffect(() => {
     const handleClickOutside = (e) => {
@@ -327,19 +391,42 @@ export default function Workbench() {
 
   useEffect(() => {
     const onKey = (e) => {
-      if (e.key === 'Escape' && drawMode) {
+      if ((e.key === 'Escape' || e.key === 'Backspace') && drawMode) {
+        e.preventDefault()
         drawStartRef.current = null
         setDrawMode(null)
         setDrawStart(null)
         setDrawCurrent(null)
-      } else if (e.key === 'Delete' && selectedId) {
+      } else if (e.key === 'Tab' && drawMode) {
+        e.preventDefault()
+        setDrawMode((prev) => (prev === 'ellipse' ? 'rect' : 'ellipse'))
+      } else if (e.key === 'Enter' && !isConfirmed) {
+        e.preventDefault()
+        handleSave()
+      } else if (e.key === 'Backspace' && !isConfirmed && !drawMode && boxes.length > 0) {
+        e.preventDefault()
+        if (selectedId) {
+          deleteBox(selectedId)
+          setSelectedId(null)
+        } else {
+          const last = boxes[boxes.length - 1]
+          deleteBox(last.id)
+        }
+      } else if (e.key === 'Delete' && !isConfirmed && selectedId) {
+        e.preventDefault()
         deleteBox(selectedId)
         setSelectedId(null)
+      } else if (e.key === 'ArrowLeft' && index > 0) {
+        e.preventDefault()
+        goPrev()
+      } else if (e.key === 'ArrowRight' && index < images.length - 1) {
+        e.preventDefault()
+        goNext()
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [drawMode, selectedId, deleteBox])
+  }, [drawMode, selectedId, deleteBox, pathId, boxes, index, isConfirmed, goPrev, goNext, images.length, handleSave])
 
   if (error) {
     return (
@@ -374,19 +461,23 @@ export default function Workbench() {
         <span className={styles.meta}>
           {runFromUrl} · 第 {index + 1}/{nTotal} 张 · 已标注 {annotatedCount}/{nTotal} · {currentFilename}
         </span>
+        <LoginButton />
       </header>
       <div className={styles.thumbnailStrip}>
-        <span className={styles.stripLabel}>本 ep 预览：</span>
+        <span className={styles.stripLabel}>本 ep 预览（可左右滚动）：</span>
         <div className={styles.stripScroll}>
           {images.map((img, i) => (
             <div
               key={img.id}
+              ref={i === index ? stripCurrentRef : null}
               className={`${styles.stripItem} ${i === index ? styles.stripCurrent : ''}`}
               onClick={() => {
                 if (i === index) return
-                const next = images[i]
-                const updated = images.map((im, j) => (j === index ? { ...im, annotated: boxes.length > 0 } : im))
-                syncImagesAndNavigate(updated, next.id, i)
+                trySwitchImage(() => {
+                  const next = images[i]
+                  const updated = images.map((im, j) => (j === index ? { ...im, annotated: boxes.length > 0 } : im))
+                  syncImagesAndNavigate(updated, next.id, i)
+                })
               }}
             >
               <AnnotatedThumbnail
@@ -399,74 +490,49 @@ export default function Workbench() {
               >
                 {img.annotated && <span className={styles.stripBadge}>✅</span>}
               </AnnotatedThumbnail>
+              {i === index && (
+                <span className={styles.stripCurrentName} title={currentFilename}>{currentFilename}</span>
+              )}
+              {img.annotated && (
+                <button
+                  type="button"
+                  className={styles.stripUnannotate}
+                  onClick={(e) => { e.stopPropagation(); handleUnannotate(img, i) }}
+                  title="取消标注（清除并解锁）"
+                >
+                  取消标注
+                </button>
+              )}
             </div>
           ))}
         </div>
       </div>
-      <div className={styles.toolbar}>
-        <button type="button" onClick={goPrev} disabled={index <= 0}>← 上一张</button>
-        <button type="button" onClick={goNext} disabled={index >= nTotal - 1}>下一张 →</button>
-        <div className={styles.addDropdown} ref={(el) => { addDropdownRef.current = el }}>
-          <button
-            type="button"
-            className={styles.addDropdownTrigger}
-            onClick={() => setAddDropdownOpen((o) => !o)}
-          >
-            添加标注 ▼
-          </button>
-          {addDropdownOpen && (
-            <div className={styles.addDropdownMenu}>
-              <button type="button" onClick={() => { setDrawMode('ellipse'); setAddDropdownOpen(false) }} title="在画布上拖拽一次画出椭圆">
-                椭圆（拖拽绘制）
-              </button>
-              <button type="button" onClick={() => { setDrawMode('rect'); setAddDropdownOpen(false) }} title="在画布上拖拽一次画出矩形">
-                矩形（拖拽绘制）
-              </button>
-            </div>
-          )}
-        </div>
-        <button
-          type="button"
-          disabled={!selectedId}
-          onClick={() => { if (selectedId) { deleteBox(selectedId); setSelectedId(null) } }}
-          title={selectedId ? '删除当前选中的椭圆（或按 Delete 键）' : '请先选中一个椭圆'}
-        >
-          删除选中
-        </button>
-        <button
-          type="button"
-          disabled={boxes.length === 0}
-          onClick={async () => {
-            if (!pathId || boxes.length === 0) return
-            try {
-              await clearWorkstationAnnotation(pathId)
-              clearBoxes()
-              setSelectedId(null)
-              setImages((prev) => prev.map((img, i) => (i === index ? { ...img, annotated: false } : img)))
-            } catch (e) {
-              alert(e.message)
-            }
-          }}
-          title="清除当前图全部标注，可重新添加椭圆"
-        >
-          清除全部
-        </button>
-        <button type="button" className={styles.btnSave} onClick={handleSave} disabled={saving}>
-          {saving ? '保存中…' : '确认 · 保存'}
-        </button>
-      </div>
       <main className={styles.canvasArea}>
-        <div className={styles.panel}>
+        <div className={styles.canvasWithToolbar}>
+          <div className={styles.panel}>
           <p className={styles.panelTitle}>
             📐 操作区
-            {drawMode ? ` · 请在画布上拖拽一次绘制${drawMode === 'ellipse' ? '椭圆' : '矩形'}` : '（拖拽可移动，选中后缩放，点击空白取消选中）'}
+            {isConfirmed ? ' · 已确认，不可继续标注（点击下方「取消标注」可回退继续编辑）' : drawMode ? ` · 请拖拽绘制${drawMode === 'ellipse' ? '椭圆' : '矩形'}（Backspace 取消 | Tab 切换形状 | Enter 保存）` : '（拖拽可移动，选中后缩放；左/右边缘或 ←/→ 切换图片；鼠标移入自动椭圆拉框）'}
           </p>
-          <Stage
+          <div className={styles.imageNavWrap}>
+            <div
+              className={styles.imageNavArrow}
+              data-side="left"
+              onClick={() => index > 0 && goPrev()}
+              title="上一张（←）"
+            >
+              <Icon name="arrow-left" size={32} className={styles.imageNavIcon} />
+            </div>
+            <Stage
             ref={stageRef}
             width={dispW}
             height={dispH}
+            onMouseEnter={() => {
+              if (isConfirmed || drawMode) return
+              setDrawMode('ellipse')
+            }}
             onMouseDown={(e) => {
-              if (!drawMode) return
+              if (isConfirmed || !drawMode) return
               const stage = e.target.getStage()
               const pos = stage.getPointerPosition()
               if (pos) {
@@ -515,8 +581,8 @@ export default function Workbench() {
                 height={dispH}
                 fill="transparent"
                 listening
-                onClick={() => { if (!drawMode) setSelectedId(null) }}
-                onTap={() => { if (!drawMode) setSelectedId(null) }}
+                onClick={() => { if (!drawMode && !isConfirmed) setSelectedId(null) }}
+                onTap={() => { if (!drawMode && !isConfirmed) setSelectedId(null) }}
               />
               <KonvaImageWithLoader src={imageUrl} width={dispW} height={dispH} />
               {drawStart && drawCurrent && drawMode && (
@@ -551,19 +617,30 @@ export default function Workbench() {
                   isSelected={box.id === selectedId}
                   onSelect={() => setSelectedId(box.id)}
                   onChange={(attrs) => updateBox(box.id, attrs)}
-                  listening={!drawMode}
+                  listening={!drawMode && !isConfirmed}
                 />
               ))}
             </Layer>
           </Stage>
-        </div>
-        <div className={styles.panel}>
+            <div
+              className={styles.imageNavArrow}
+              data-side="right"
+              onClick={() => index < nTotal - 1 && goNext()}
+              title="下一张（→）"
+            >
+              <Icon name="arrow-right" size={32} className={styles.imageNavIcon} />
+            </div>
+          </div>
+          </div>
+          <div className={styles.rightColumn}>
+          <div className={`${styles.panel} ${styles.previewPanel}`}>
           <p className={styles.panelTitle}>📷 预览（实时同步）</p>
+          <div className={styles.previewWrap}>
           <Stage
-            width={Math.min(400, dispW)}
-            height={Math.min(300, dispH)}
-            scaleX={dispW > 0 ? Math.min(400, dispW) / dispW : 1}
-            scaleY={dispH > 0 ? Math.min(300, dispH) / dispH : 1}
+            width={Math.min(520, dispW)}
+            height={Math.min(390, dispH)}
+            scaleX={dispW > 0 ? Math.min(520, dispW) / dispW : 1}
+            scaleY={dispH > 0 ? Math.min(390, dispH) / dispH : 1}
           >
             <Layer>
               <KonvaImageWithLoader src={imageUrl} width={dispW} height={dispH} />
@@ -572,6 +649,70 @@ export default function Workbench() {
               ))}
             </Layer>
           </Stage>
+          </div>
+          </div>
+          <aside className={styles.toolbarSide}>
+            <div className={styles.addDropdown} ref={(el) => { addDropdownRef.current = el }}>
+              <button
+                type="button"
+                className={styles.addDropdownTrigger}
+                disabled={isConfirmed}
+                onClick={() => { if (!isConfirmed) { setDrawMode('ellipse'); setAddDropdownOpen(false) } }}
+                title="在画布上拖拽一次画出椭圆（默认）"
+              >
+                椭圆拉框
+              </button>
+              <button
+                type="button"
+                className={styles.addDropdownCaret}
+                onClick={(e) => { e.stopPropagation(); setAddDropdownOpen((o) => !o) }}
+                title="切换为矩形"
+              >
+                ▼
+              </button>
+              {addDropdownOpen && (
+                <div className={styles.addDropdownMenu}>
+                  <button type="button" onClick={() => { setDrawMode('ellipse'); setAddDropdownOpen(false) }} title="在画布上拖拽一次画出椭圆">
+                    椭圆（拖拽绘制）
+                  </button>
+                  <button type="button" onClick={() => { setDrawMode('rect'); setAddDropdownOpen(false) }} title="在画布上拖拽一次画出矩形">
+                    矩形（拖拽绘制）
+                  </button>
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
+              disabled={isConfirmed || !selectedId}
+              onClick={() => {
+                if (!selectedId) return
+                const rest = boxes.filter((b) => b.id !== selectedId)
+                deleteBox(selectedId)
+                setSelectedId(null)
+                setImages((prev) => prev.map((img, i) => (i === index ? { ...img, annotated: rest.length > 0 } : img)))
+              }}
+              title={selectedId ? '删除当前选中的标注（Delete 或 Backspace，未保存）' : '请先点击画布上的绿色框以选中'}
+            >
+              删除选中
+            </button>
+            <button
+              type="button"
+              disabled={isConfirmed || boxes.length === 0}
+              onClick={() => {
+                if (boxes.length === 0) return
+                clearBoxes()
+                setSelectedId(null)
+                setImages((prev) => prev.map((img, i) => (i === index ? { ...img, annotated: false } : img)))
+              }}
+              title="清除当前图全部标注（未保存，需按 Enter 或点击保存）"
+            >
+              清除全部
+            </button>
+            <button type="button" className={styles.btnSave} onClick={handleSave} disabled={saving || isConfirmed}>
+              {saving ? '保存中…' : '确认 · 保存'}
+            </button>
+          </aside>
+          </div>
         </div>
       </main>
     </div>

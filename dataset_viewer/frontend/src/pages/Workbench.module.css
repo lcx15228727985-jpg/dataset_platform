@@ -6,7 +6,7 @@
 }
 
 .header {
-  padding: 0.75rem 1.25rem;
+  padding: 0.875rem 1.5rem;
   background: #222;
   border-bottom: 1px solid #333;
   display: flex;
@@ -15,55 +15,82 @@
   flex-wrap: wrap;
 }
 .header button {
-  padding: 6px 12px;
+  padding: 6px 14px;
   background: #333;
   color: #eee;
   border: 1px solid #444;
   border-radius: 6px;
   cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
 }
-.header button:hover { background: #444; }
-.title { font-weight: 600; }
+.header button:hover { background: #444; border-color: #555; }
+.title { font-weight: 600; font-size: 1rem; }
 .meta { font-size: 0.85rem; color: #888; }
 
 .thumbnailStrip {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 0.5rem;
-  padding: 0.5rem 1rem;
+  padding: 0.625rem 1.25rem;
   background: #1e1e1e;
   border-bottom: 1px solid #333;
   overflow: hidden;
+  flex-shrink: 0;
 }
 .stripLabel {
   font-size: 0.8rem;
   color: #888;
   flex-shrink: 0;
+  align-self: center;
 }
 .stripScroll {
   display: flex;
-  gap: 0.35rem;
+  align-items: flex-end;
+  gap: 0.5rem;
   overflow-x: auto;
-  padding: 2px 0;
+  overflow-y: hidden;
+  padding: 4px 0 2px 0;
   flex: 1;
   min-width: 0;
+  scrollbar-gutter: stable;
 }
-.stripScroll::-webkit-scrollbar { height: 6px; }
-.stripScroll::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
+.stripScroll::-webkit-scrollbar { height: 8px; }
+.stripScroll::-webkit-scrollbar-track { background: #2a2a2a; border-radius: 4px; }
+.stripScroll::-webkit-scrollbar-thumb { background: #555; border-radius: 4px; }
+.stripScroll::-webkit-scrollbar-thumb:hover { background: #666; }
 .stripItem {
   flex-shrink: 0;
-  width: 48px;
-  height: 48px;
+  width: 40px;
+  height: 40px;
   border-radius: 4px;
-  overflow: hidden;
+  overflow: visible;
   cursor: pointer;
   border: 2px solid transparent;
   position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.stripItem.stripCurrent {
+  width: 96px;
+  height: auto;
+  border-color: #0a5;
+  border-width: 2px;
 }
 .stripThumb {
   width: 100%;
   height: 100%;
   display: block;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.stripItem:not(.stripCurrent) .stripThumb {
+  width: 40px;
+  height: 40px;
+}
+.stripItem.stripCurrent .stripThumb {
+  width: 92px;
+  height: 72px;
 }
 .stripThumb img {
   width: 100%;
@@ -72,12 +99,22 @@
   display: block;
 }
 .stripItem:hover { border-color: #666; }
-.stripItem.stripCurrent { border-color: #0a5; }
 .stripItem img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
+}
+.stripCurrentName {
+  display: block;
+  width: 92px;
+  margin-top: 4px;
+  font-size: 0.7rem;
+  color: #aaa;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
 }
 .stripBadge {
   position: absolute;
@@ -88,42 +125,36 @@
   padding: 1px 2px;
   border-radius: 2px;
 }
-
-.toolbar {
-  padding: 0.5rem 1rem;
-  background: #252525;
-  border-bottom: 1px solid #333;
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-}
-.toolbar button {
-  padding: 6px 12px;
+.stripUnannotate {
+  margin-top: 4px;
+  padding: 2px 6px;
+  font-size: 0.65rem;
+  color: #aaa;
   background: #333;
-  color: #eee;
   border: 1px solid #444;
-  border-radius: 6px;
+  border-radius: 4px;
   cursor: pointer;
+  white-space: nowrap;
+  width: 100%;
+  max-width: 92px;
 }
-.toolbar button:hover:not(:disabled) { background: #444; }
-.toolbar button:disabled { opacity: 0.5; cursor: not-allowed; }
+.stripUnannotate:hover {
+  color: #fff;
+  background: #444;
+}
+
 .addDropdown {
   position: relative;
 }
 .addDropdownTrigger {
-  padding: 6px 12px;
   background: #333;
   color: #eee;
   border: 1px solid #444;
-  border-radius: 6px;
   cursor: pointer;
 }
 .addDropdownTrigger:hover { background: #444; }
 .addDropdownMenu {
   position: absolute;
-  top: 100%;
-  left: 0;
-  margin-top: 2px;
   background: #333;
   border: 1px solid #444;
   border-radius: 6px;
@@ -131,7 +162,7 @@
   z-index: 100;
   display: flex;
   flex-direction: column;
-  min-width: 90px;
+  min-width: 120px;
 }
 .addDropdownMenu button {
   padding: 8px 14px;
@@ -155,9 +186,141 @@
 .canvasArea {
   flex: 1;
   display: flex;
-  gap: 1rem;
-  padding: 1rem;
+  flex-direction: column;
+  gap: 1.25rem;
+  padding: 1.25rem;
   overflow: auto;
+  min-height: 0;
+}
+
+.canvasWithToolbar {
+  display: flex;
+  gap: 1rem;
+  flex: 1;
+  min-height: 0;
+}
+
+.rightColumn {
+  flex: 0 0 auto;
+  width: 420px;
+  max-width: 35%;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.previewPanel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.previewWrap {
+  flex: 1;
+  min-height: 200px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  overflow: hidden;
+}
+
+.canvasWithToolbar .panel:first-child {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.imageNavWrap {
+  position: relative;
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 0;
+  overflow: auto;
+}
+.imageNavArrow {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 80px;
+  min-width: 60px;
+  z-index: 10;
+  cursor: pointer;
+  background: transparent;
+  transition: background 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.imageNavArrow:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.imageNavArrow[data-side="left"] { left: 0; }
+.imageNavArrow[data-side="right"] { right: 0; }
+.imageNavIcon {
+  opacity: 0.4;
+  pointer-events: none;
+  filter: drop-shadow(0 0 4px rgba(0,0,0,0.8));
+}
+.imageNavArrow:hover .imageNavIcon {
+  opacity: 0.85;
+}
+
+.toolbarSide {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  background: #252525;
+  border: 1px solid #333;
+  border-radius: 8px;
+  flex-shrink: 0;
+  width: 100%;
+  align-items: center;
+  justify-content: flex-start;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+.toolbarSide button {
+  padding: 8px 12px;
+  background: #333;
+  color: #eee;
+  border: 1px solid #444;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: background 0.15s, border-color 0.15s;
+}
+.toolbarSide button:hover:not(:disabled) { background: #444; border-color: #555; }
+.toolbarSide button:disabled { opacity: 0.5; cursor: not-allowed; }
+.toolbarSide .btnSave { background: #0a5; border-color: #0a5; }
+.toolbarSide .btnSave:hover:not(:disabled) { background: #0c6; }
+.toolbarSide .addDropdown {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  flex-shrink: 0;
+}
+.toolbarSide .addDropdownTrigger {
+  flex: 1;
+  border-radius: 6px 0 0 6px;
+  padding: 8px 10px;
+}
+.toolbarSide .addDropdownCaret {
+  flex: 0 0 auto;
+  width: 28px;
+  padding: 8px 4px;
+  border-radius: 0 6px 6px 0;
+  border-left-width: 0;
+}
+.toolbarSide .addDropdownMenu {
+  left: 0;
+  min-width: 140px;
+  top: 100%;
+  margin-top: 2px;
 }
 
 .panel {
@@ -166,13 +329,15 @@
   flex-direction: column;
   background: #1e1e1e;
   border-radius: 8px;
-  padding: 0.75rem;
+  padding: 1rem;
   border: 1px solid #333;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 .panelTitle {
-  margin: 0 0 0.5rem 0;
+  margin: 0 0 0.625rem 0;
   font-size: 0.9rem;
   color: #aaa;
+  font-weight: 500;
 }
 
 .main {

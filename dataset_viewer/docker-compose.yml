@@ -1,19 +1,43 @@
 # 数据集标注平台 - Linux Docker 部署
 # 用法: docker-compose up -d
-# 访问: http://<主机IP>:8000
+# 访问: http://<主机IP> (Nginx 80) 或 http://<主机IP>:8000 (直连后端)
 
 services:
+  mongo:
+    image: mongo:7
+    container_name: dataset-annotation-mongo
+    volumes:
+      - mongo_data:/data/db
+    restart: unless-stopped
+
   app:
     build: .
     container_name: dataset-annotation
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     environment:
       DATA_ROOT: /data
       EXPORT_DIR: /data/export
-      # 使用 PostgreSQL 时取消注释：
+      JWT_SECRET: ${JWT_SECRET:-dataset-annotation-secret}
+      MONGODB_URI: mongodb://mongo:27017
+      # 使用 PostgreSQL 时：
       # DATABASE_URL: postgresql://user:pass@pg:5432/annot_db
     volumes:
-      # 数据集根目录（run/episode/images 结构）必须挂载
       - ${DATA_ROOT:-./data}:/data
+    depends_on:
+      - mongo
     restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    container_name: dataset-annotation-nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - app
+    restart: unless-stopped
+
+volumes:
+  mongo_data:

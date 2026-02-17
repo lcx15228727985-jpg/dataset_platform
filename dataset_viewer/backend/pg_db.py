@@ -149,20 +149,27 @@ async def get_annotation_boxes(image_id: int) -> list:
         return row["boxes"] if isinstance(row["boxes"], list) else []
 
 
-async def upsert_annotation(image_id: int, boxes: list) -> None:
-    """UPSERT annotations"""
+async def _ensure_user_id_column(conn) -> None:
+    """确保 annotations 有 user_id 列（迁移旧库）"""
+    await conn.execute("ALTER TABLE annotations ADD COLUMN IF NOT EXISTS user_id TEXT")
+
+
+async def upsert_annotation(image_id: int, boxes: list, user_id: str | None = None) -> None:
+    """UPSERT annotations（含 user_id 以支持按用户统计）"""
     import json
     pool = await get_pool()
     if not pool:
         return
     boxes_json = json.dumps(boxes) if not isinstance(boxes, str) else boxes
     async with pool.acquire() as conn:
+        await _ensure_user_id_column(conn)
         await conn.execute(
-            """INSERT INTO annotations (image_id, boxes, updated_at)
-               VALUES ($1, $2, NOW())
-               ON CONFLICT (image_id) DO UPDATE SET boxes = $2, updated_at = NOW()""",
+            """INSERT INTO annotations (image_id, boxes, updated_at, user_id)
+               VALUES ($1, $2, NOW(), $3)
+               ON CONFLICT (image_id) DO UPDATE SET boxes = $2, updated_at = NOW(), user_id = $3""",
             image_id,
             boxes_json,
+            user_id,
         )
 
 
@@ -183,6 +190,28 @@ async def update_image_annotated(image_id: int, annotated: bool = True) -> None:
             ) WHERE id = (SELECT episode_id FROM images WHERE id = $1)""",
             image_id,
         )
+
+
+async def get_annotation_counts_by_user(run_name: str) -> list[dict[str, Any]]:
+    """按用户统计某 run 的标注数量，返回 [{user_id, count}]。user_id 为 null 时显示为 (历史)"""
+    pool = await get_pool()
+    if not pool:
+        return []
+    async with pool.acquire() as conn:
+        await _ensure_user_id_column(conn)
+        run_id = await conn.fetchval("SELECT id FROM runs WHERE name = $1", run_name)
+        if run_id is None:
+            return []
+        rows = await conn.fetch(
+            """SELECT COALESCE(a.user_id, '(历史)') AS uid, COUNT(*)::int AS cnt
+               FROM annotations a
+               JOIN images i ON a.image_id = i.id
+               JOIN episodes e ON i.episode_id = e.id
+               WHERE e.run_id = $1
+               GROUP BY a.user_id""",
+            run_id,
+        )
+        return [{"user_id": r["uid"], "count": r["cnt"]} for r in rows]
 
 
 async def get_all_annotated_for_export() -> list[dict[str, Any]]:

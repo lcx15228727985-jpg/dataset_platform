@@ -1,15 +1,19 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { getRuns, getEpisodes } from '../api/client'
+import { getRuns, getEpisodes, getDashboardUserStats } from '../api/client'
+import { useAuthStore } from '../store/auth'
 import EpPieChart, { sortEpisodes } from '../components/EpPieChart'
+import LoginButton from '../components/LoginButton'
 import styles from './Dashboard.module.css'
 
 export default function Dashboard() {
   const [runs, setRuns] = useState([])
   const [run, setRun] = useState('')
   const [episodes, setEpisodes] = useState([])
+  const [userStats, setUserStats] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const userId = useAuthStore((s) => s.userId)
 
   useEffect(() => {
     getRuns()
@@ -25,8 +29,14 @@ export default function Dashboard() {
   useEffect(() => {
     if (!run) return
     setLoading(true)
-    getEpisodes(run)
-      .then((d) => setEpisodes(sortEpisodes(d.episodes || [])))
+    Promise.all([
+      getEpisodes(run),
+      getDashboardUserStats(run).catch(() => null),
+    ])
+      .then(([epsRes, statsRes]) => {
+        setEpisodes(sortEpisodes(epsRes.episodes || []))
+        setUserStats(statsRes)
+      })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false))
   }, [run])
@@ -38,6 +48,7 @@ export default function Dashboard() {
       <header className={styles.header}>
         <Link to="/" className={styles.backLink}>← 返回图库</Link>
         <h1>标注看板</h1>
+        <LoginButton />
       </header>
 
       <main className={styles.main}>
@@ -82,6 +93,23 @@ export default function Dashboard() {
               <span className={styles.statValue}>{episodes.reduce((s, e) => s + (e.annotatedCount || 0), 0).toLocaleString()}</span>
             </div>
           </div>
+          {userStats && (
+            <div className={styles.userStats}>
+              <h3>按用户统计</h3>
+              <div className={styles.stats}>
+                <div className={styles.statItem}>
+                  <span className={styles.statLabel}>当前用户 ({userId || '未登录'})</span>
+                  <span className={styles.statValue}>{userStats.current_user_count?.toLocaleString() ?? 0}</span>
+                </div>
+                {userStats.others?.map((o) => (
+                  <div key={o.user_id} className={styles.statItem}>
+                    <span className={styles.statLabel}>用户 {o.user_id}</span>
+                    <span className={styles.statValue}>{o.count?.toLocaleString() ?? 0}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </section>
       </main>
     </div>
