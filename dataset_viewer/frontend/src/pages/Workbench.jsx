@@ -189,6 +189,8 @@ export default function Workbench() {
   const drawStartRef = useRef(null)
   const mountedRef = useRef(true)
   const lastSavedBoxesRef = useRef(null)
+  const currentPathRef = useRef(null)
+  const lastSaveTimeRef = useRef(0)
 
   const imgW = meta?.width || 0
   const imgH = meta?.height || 0
@@ -203,6 +205,24 @@ export default function Workbench() {
     return () => { mountedRef.current = false; clear() }
   }, [])
 
+  // 切换图片时重置绘制状态，默认椭圆以便加载完直接可标注
+  useEffect(() => {
+    drawStartRef.current = null
+    setDrawStart(null)
+    setDrawCurrent(null)
+    setDrawMode('ellipse')
+  }, [pathId])
+
+  // 策略1：预加载下一张图，切图时命中缓存
+  useEffect(() => {
+    if (!images.length || index < 0 || index >= images.length - 1) return
+    const next = images[index + 1]
+    if (!next?.id) return
+    const nextUrl = getImageUrl(next.id)
+    const img = new Image()
+    img.src = nextUrl
+  }, [images, index])
+
   useEffect(() => {
     if (!pathFromUrl && !state?.imageId) {
       navigate('/', { replace: true })
@@ -212,15 +232,42 @@ export default function Workbench() {
     const imgs = state?.images
     const idx = state?.index ?? indexFromUrl
     if (!path) return
-    setLoading(true)
+    currentPathRef.current = path
     setError(null)
     let imgsResolved = imgs && Array.isArray(imgs) && imgs.length > 0
     if (imgsResolved) {
       setImages(imgs)
       setIndex(idx >= 0 && idx < imgs.length ? idx : 0)
+      setLoading(false)
+      // 策略2+3：列表内切图不拉全屏 loading，乐观更新后后台拉取
+      loadImage({
+        path_id: path,
+        imageUrl: getImageUrl(path),
+        meta: null,
+        boxes: [],
+      })
+      lastSavedBoxesRef.current = []
+      getWorkstationData(path).then((data) => {
+        if (!mountedRef.current || currentPathRef.current !== path) return
+        const loadedBoxes = (data.boxes || []).map((b) => ({
+          ...b,
+          id: b.id || `box_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+        }))
+        loadImage({
+          path_id: data.path_id,
+          imageUrl: getImageUrl(data.path_id),
+          meta: data.meta,
+          boxes: loadedBoxes,
+        })
+        lastSavedBoxesRef.current = loadedBoxes
+      }).catch((e) => {
+        if (mountedRef.current && currentPathRef.current === path) setError(e.message)
+      })
+      return
     }
+    setLoading(true)
     const fetchWorkstation = () => getWorkstationData(path).then((data) => {
-      if (!mountedRef.current) return
+      if (!mountedRef.current || currentPathRef.current !== path) return
       const loadedBoxes = (data.boxes || []).map((b) => ({
         ...b,
         id: b.id || `box_${Date.now()}_${Math.random().toString(36).slice(2)}`,
@@ -233,14 +280,6 @@ export default function Workbench() {
       })
       lastSavedBoxesRef.current = loadedBoxes
     })
-    if (imgsResolved) {
-      fetchWorkstation().catch((e) => {
-        if (mountedRef.current) setError(e.message)
-      }).finally(() => {
-        if (mountedRef.current) setLoading(false)
-      })
-      return
-    }
     const epMatch = path.split('/').find((p) => /^episode_\d+$/.test(p))
     const epName = epMatch ? 'ep' + epMatch.replace('episode_', '') : null
     const run = runFromUrl || 'unknown'
@@ -269,7 +308,7 @@ export default function Workbench() {
         return getWorkstationData(path)
       })
       .then((data) => {
-        if (!mountedRef.current || !data) return
+        if (!mountedRef.current || !data || currentPathRef.current !== path) return
         const loadedBoxes = (data.boxes || []).map((b) => ({
           ...b,
           id: b.id || `box_${Date.now()}_${Math.random().toString(36).slice(2)}`,
@@ -283,7 +322,7 @@ export default function Workbench() {
         lastSavedBoxesRef.current = loadedBoxes
       })
       .catch((e) => {
-        if (mountedRef.current) setError(e.message || '加载失败')
+        if (mountedRef.current && currentPathRef.current === path) setError(e.message || '加载失败')
       })
       .finally(() => {
         if (mountedRef.current) setLoading(false)
@@ -307,7 +346,7 @@ export default function Workbench() {
 
   const trySwitchImage = useCallback((doSwitch) => {
     if (hasUnsavedChanges()) {
-      alert('您有未保存的更改，请按 Enter 键保存后再切换图片。')
+      alert('您有未保存的更改，请按空格键保存后再切换图片。')
       return
     }
     doSwitch()
@@ -333,6 +372,9 @@ export default function Workbench() {
 
   const handleSave = useCallback(async () => {
     if (!pathId) return
+    const now = Date.now()
+    if (now - lastSaveTimeRef.current < 500) return
+    lastSaveTimeRef.current = now
     setSaving(true)
     try {
       await saveWorkstationBoxes(pathId, boxes)
@@ -397,10 +439,10 @@ export default function Workbench() {
         setDrawMode(null)
         setDrawStart(null)
         setDrawCurrent(null)
-      } else if (e.key === 'Tab' && drawMode) {
+      } else if (e.key === 'Tab') {
         e.preventDefault()
         setDrawMode((prev) => (prev === 'ellipse' ? 'rect' : 'ellipse'))
-      } else if (e.key === 'Enter' && !isConfirmed) {
+      } else if (e.key === ' ' && !isConfirmed) {
         e.preventDefault()
         handleSave()
       } else if (e.key === 'Backspace' && !isConfirmed && !drawMode && boxes.length > 0) {
@@ -512,7 +554,7 @@ export default function Workbench() {
           <div className={styles.panel}>
           <p className={styles.panelTitle}>
             📐 操作区
-            {isConfirmed ? ' · 已确认，不可继续标注（点击下方「取消标注」可回退继续编辑）' : drawMode ? ` · 请拖拽绘制${drawMode === 'ellipse' ? '椭圆' : '矩形'}（Backspace 取消 | Tab 切换形状 | Enter 保存）` : '（拖拽可移动，选中后缩放；左/右边缘或 ←/→ 切换图片；鼠标移入自动椭圆拉框）'}
+            {isConfirmed ? ' · 已确认，不可继续标注（点击下方「取消标注」可回退继续编辑）' : drawMode ? ` · 请拖拽绘制${drawMode === 'ellipse' ? '椭圆' : '矩形'}（Backspace 取消 | Tab 切换形状 | 空格 保存）` : '（拖拽可移动，选中后缩放；左/右边缘或 ←/→ 切换图片；鼠标移入即可拖拽绘制，Tab 切换椭圆/矩形优先于点击按钮）'}
           </p>
           <div className={styles.imageNavWrap}>
             <div
@@ -528,8 +570,8 @@ export default function Workbench() {
             width={dispW}
             height={dispH}
             onMouseEnter={() => {
-              if (isConfirmed || drawMode) return
-              setDrawMode('ellipse')
+              if (isConfirmed) return
+              if (!drawMode) setDrawMode('ellipse')
             }}
             onMouseDown={(e) => {
               if (isConfirmed || !drawMode) return
@@ -704,7 +746,7 @@ export default function Workbench() {
                 setSelectedId(null)
                 setImages((prev) => prev.map((img, i) => (i === index ? { ...img, annotated: false } : img)))
               }}
-              title="清除当前图全部标注（未保存，需按 Enter 或点击保存）"
+              title="清除当前图全部标注（未保存，需按空格或点击保存）"
             >
               清除全部
             </button>
