@@ -18,7 +18,21 @@ export default function Gallery() {
   const [gridCols, setGridCols] = useState(4)
   const [maxShow, setMaxShow] = useState(48)
   const [collapsedEps, setCollapsedEps] = useState(() => new Set())
+  const [lastAnnotated, setLastAnnotated] = useState(null)
   const navigate = useNavigate()
+  
+  // 读取上次标注位置
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('lastAnnotated')
+      if (saved) {
+        const parsed = JSON.parse(saved)
+        setLastAnnotated(parsed)
+      }
+    } catch (e) {
+      console.warn('Failed to load last annotated position:', e)
+    }
+  }, [])
 
   const toggleEp = (name) => {
     setCollapsedEps((prev) => {
@@ -62,6 +76,30 @@ export default function Gallery() {
   const goAnnotate = (imageId, images, index) => {
     const search = `?path=${encodeURIComponent(imageId)}&run=${encodeURIComponent(run)}&index=${index}`
     navigate(`/annotate${search}`, { state: { imageId, images, index, run } })
+  }
+
+  // 定位到上次标注的位置
+  const goToLastAnnotated = () => {
+    if (!lastAnnotated) {
+      alert('暂无上次标注记录')
+      return
+    }
+    
+    const { run: lastRun, pathId, index: lastIndex } = lastAnnotated
+    
+    // 如果当前 run 不是上次的 run，先切换 run（episodes 会自动加载）
+    if (lastRun && lastRun !== run && runs.includes(lastRun)) {
+      setRun(lastRun)
+      // 等待一个 tick 让 episodes 开始加载，然后直接跳转（Workbench 会处理加载）
+      setTimeout(() => {
+        const search = `?path=${encodeURIComponent(pathId)}&run=${encodeURIComponent(lastRun)}&index=${lastIndex || 0}`
+        navigate(`/annotate${search}`, { state: { imageId: pathId, images: [], index: lastIndex || 0, run: lastRun } })
+      }, 100)
+    } else {
+      // 直接跳转到标注页面
+      const search = `?path=${encodeURIComponent(pathId)}&run=${encodeURIComponent(lastRun || run)}&index=${lastIndex || 0}`
+      navigate(`/annotate${search}`, { state: { imageId: pathId, images: [], index: lastIndex || 0, run: lastRun || run } })
+    }
   }
 
   const handleDeleteAnnotation = async (imageId, e) => {
@@ -136,6 +174,20 @@ export default function Gallery() {
         <button type="button" className={styles.dashboardBtn} onClick={() => navigate('/dashboard')}>
           查看标注统计 →
         </button>
+        
+        {lastAnnotated && (
+          <>
+            <h2>快速定位</h2>
+            <button 
+              type="button" 
+              className={styles.dashboardBtn} 
+              onClick={goToLastAnnotated}
+              title={`上次标注：${lastAnnotated.run || '未知'} · ${new Date(lastAnnotated.timestamp).toLocaleString()}`}
+            >
+              📍 定位到上次标注
+            </button>
+          </>
+        )}
         <h2>导出</h2>
         <button type="button" className={styles.exportBtn} onClick={() => downloadExportAnnotatedImagesZip().catch((e) => alert(e.message))} title="下载已标注图片 ZIP，结构：{run}标注版/episode_X/xxx.png">
           导出已标注图片 (ZIP)

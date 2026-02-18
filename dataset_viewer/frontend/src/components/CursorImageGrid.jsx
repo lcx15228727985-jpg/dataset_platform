@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { getEpisodeImages, deleteAnnotation } from '../api/client'
 import AnnotatedThumbnail from './AnnotatedThumbnail'
 import styles from '../pages/Gallery.module.css'
@@ -21,6 +21,9 @@ export default function CursorImageGrid({
   const [nextCursor, setNextCursor] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const containerRef = useRef(null)
+  const loadingTriggerRef = useRef(null)
+  const loadingRef = useRef(false)
 
   const handleDelete = async (imageId, e) => {
     e.stopPropagation()
@@ -38,7 +41,8 @@ export default function CursorImageGrid({
 
   const loadPage = useCallback(
     (cursor = null) => {
-      if (loading) return
+      if (loadingRef.current) return
+      loadingRef.current = true
       setLoading(true)
       setError(null)
       getEpisodeImages(run, ep, cursor, PAGE_SIZE)
@@ -47,14 +51,41 @@ export default function CursorImageGrid({
           setNextCursor(next)
         })
         .catch((e) => setError(e.message))
-        .finally(() => setLoading(false))
+        .finally(() => {
+          setLoading(false)
+          loadingRef.current = false
+        })
     },
-    [run, ep, loading]
+    [run, ep]
   )
 
   useEffect(() => {
     if (imageCount > 0 && items.length === 0) loadPage()
-  }, [imageCount, run, ep])
+  }, [imageCount, run, ep, loadPage])
+
+  // 滚动到底部自动加载更多
+  useEffect(() => {
+    if (collapsed || !nextCursor || loadingRef.current) return
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && nextCursor && !loadingRef.current) {
+          loadPage(nextCursor)
+        }
+      },
+      { threshold: 0.1 }
+    )
+
+    if (loadingTriggerRef.current) {
+      observer.observe(loadingTriggerRef.current)
+    }
+
+    return () => {
+      if (loadingTriggerRef.current) {
+        observer.unobserve(loadingTriggerRef.current)
+      }
+    }
+  }, [nextCursor, collapsed, loadPage])
 
   if (imageCount === 0) return null
 
@@ -95,9 +126,14 @@ export default function CursorImageGrid({
         ))}
       </div>
       {loading && <div className={styles.loading}>加载中…</div>}
+      {/* 滚动触发器：当这个元素进入视口时自动加载 */}
+      {nextCursor && !loading && (
+        <div ref={loadingTriggerRef} style={{ height: '20px', marginTop: '10px' }} />
+      )}
+      {/* 保留手动加载按钮作为备选 */}
       {nextCursor && !loading && (
         <button type="button" onClick={() => loadPage(nextCursor)} className={styles.loadMore}>
-          加载更多
+          手动加载更多
         </button>
       )}
         </>

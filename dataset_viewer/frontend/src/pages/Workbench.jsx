@@ -385,6 +385,20 @@ export default function Workbench() {
           i === index ? { ...img, annotated, confirmed: true } : img
         )
       )
+      
+      // 保存最后标注位置到 localStorage
+      try {
+        const lastAnnotated = {
+          run: runFromUrl,
+          pathId: pathId,
+          index: index,
+          timestamp: Date.now(),
+        }
+        localStorage.setItem('lastAnnotated', JSON.stringify(lastAnnotated))
+      } catch (e) {
+        console.warn('Failed to save last annotated position:', e)
+      }
+      
       if (index < images.length - 1) {
         goNext()
       }
@@ -393,7 +407,7 @@ export default function Workbench() {
     } finally {
       setSaving(false)
     }
-  }, [pathId, boxes, index, images.length, goNext])
+  }, [pathId, boxes, index, images.length, goNext, runFromUrl])
 
   const isConfirmed = images[index]?.confirmed ?? false
 

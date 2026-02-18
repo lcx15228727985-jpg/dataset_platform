@@ -15,6 +15,12 @@ RUN npm run build
 FROM python:3.11-slim
 WORKDIR /app
 
+# 使用阿里云镜像加速（国内服务器部署时 apt 显著加速）
+RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || \
+    sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list; \
+    sed -i 's|security.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || \
+    sed -i 's|security.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list
+
 # 系统依赖（Pillow 可选）
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libjpeg62-turbo libpng16-16 libwebp7 \
