@@ -13,11 +13,14 @@ import asyncio
 import io
 import json
 import os
+import tempfile
 import zipfile
+from collections import OrderedDict
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
+from starlette.background import BackgroundTask
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -79,6 +82,14 @@ app.add_middleware(
 )
 
 DATA_ROOT = get_data_root()
+
+# 分页/列表上限，避免单次请求过大导致 CPU 与内存飙升
+MAX_PAGE_SIZE = 100
+MAX_EPISODE_IMAGES_LIMIT = 100
+
+# 缩略图缓存：同一张图重复请求时直接返回缓存，降低 CPU（标注量大时大量缩略图请求会占满 CPU）
+_THUMB_CACHE: OrderedDict = OrderedDict()
+_THUMB_CACHE_MAX = 500
 
 # SQLite 回退
 try:
@@ -313,7 +324,8 @@ async def api_episodes(run: str):
 
 @app.get("/api/images")
 async def api_images(page: int = 1, page_size: int = 50):
-    """扁平分页：从库中读取图片列表，返回 id, file_path, status。需已建库（Postgres 或 SQLite）"""
+    """扁平分页：从库中读取图片列表，返回 id, file_path, status。需已建库；page_size 有上限以控制 CPU/内存。"""
+    page_size = min(max(1, page_size), MAX_PAGE_SIZE)
     if await _use_pg():
         rows = await pg_db.get_images_page(page, page_size)
         return rows
@@ -328,7 +340,8 @@ async def api_images(page: int = 1, page_size: int = 50):
 
 @app.get("/api/runs/{run}/episodes/{ep}/images")
 async def api_episode_images(run: str, ep: str, cursor: str | None = None, limit: int = 50):
-    """游标分页：从库中拉取该 episode 的图片。需已建库"""
+    """游标分页：从库中拉取该 episode 的图片。需已建库；limit 有上限以控制 CPU/内存。"""
+    limit = min(max(1, limit), MAX_EPISODE_IMAGES_LIMIT)
     if await _use_pg():
         items, next_cursor = await pg_db.get_images_cursor(run, ep, cursor, limit)
         return {"items": items, "nextCursor": next_cursor}
@@ -348,7 +361,7 @@ def _media_type(path: str) -> str:
 
 
 def _serve_image(image_id_or_path: str, thumb: bool = False, thumb_size: int = 150):
-    """解析 id/path 并返回图片文件；thumb=True 时返回缩略图（最长边 thumb_size px）"""
+    """解析 id/path 并返回图片文件；thumb=True 时返回缩略图（最长边 thumb_size px），带 LRU 缓存以降低 CPU"""
     import urllib.parse
     raw = urllib.parse.unquote(image_id_or_path)
     path = image_id_to_path(DATA_ROOT, raw)
@@ -356,6 +369,10 @@ def _serve_image(image_id_or_path: str, thumb: bool = False, thumb_size: int = 1
         raise HTTPException(status_code=404, detail="Image not found")
     if not thumb:
         return FileResponse(path, media_type=_media_type(path))
+    cache_key = (raw, thumb_size)
+    if cache_key in _THUMB_CACHE:
+        _THUMB_CACHE.move_to_end(cache_key)
+        return Response(content=_THUMB_CACHE[cache_key], media_type="image/jpeg")
     try:
         from PIL import Image
         img = Image.open(path).convert("RGB")
@@ -365,8 +382,11 @@ def _serve_image(image_id_or_path: str, thumb: bool = False, thumb_size: int = 1
             img = img.resize((int(w * r), int(h * r)), Image.LANCZOS)
         buf = io.BytesIO()
         img.save(buf, format="JPEG", quality=85)
-        buf.seek(0)
-        return Response(content=buf.getvalue(), media_type="image/jpeg")
+        data = buf.getvalue()
+        while len(_THUMB_CACHE) >= _THUMB_CACHE_MAX:
+            _THUMB_CACHE.popitem(last=False)
+        _THUMB_CACHE[cache_key] = data
+        return Response(content=data, media_type="image/jpeg")
     except Exception:
         return FileResponse(path, media_type=_media_type(path))
 
@@ -583,9 +603,11 @@ async def api_export_annotated_images_zip():
             except Exception:
                 return None
 
-        def build_zip() -> bytes:
-            buf = io.BytesIO()
-            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        def build_zip_to_path(zip_path: str) -> None:
+            """将 ZIP 写入文件，使用低压缩级别以加快导出、减少 CPU；避免整包进内存。"""
+            with zipfile.ZipFile(
+                zip_path, "w", zipfile.ZIP_DEFLATED, compresslevel=1
+            ) as zf:
                 for r in rows:
                     run_name = r.get("run", "")
                     ep_name = r.get("ep", "")
@@ -610,19 +632,24 @@ async def api_export_annotated_images_zip():
                             zf.write(full_path, arcname=arcname)
                         except Exception:
                             continue
-            buf.seek(0)
-            return buf.getvalue()
 
-        content = await asyncio.to_thread(build_zip)
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+        tmp.close()
+        try:
+            await asyncio.to_thread(build_zip_to_path, tmp.name)
+        except Exception:
+            if os.path.isfile(tmp.name):
+                os.unlink(tmp.name)
+            raise
         zip_filename = f"{rows[0].get('run', 'annotated')}标注版.zip"
-        # HTTP 头仅支持 latin-1，中文文件名用 RFC 5987 的 filename* 以 UTF-8 传
         from urllib.parse import quote
         safe_filename = quote(zip_filename, safe="")
         disposition = f'attachment; filename="annotated_images.zip"; filename*=UTF-8\'\'{safe_filename}'
-        return Response(
-            content=content,
+        return FileResponse(
+            tmp.name,
             media_type="application/zip",
             headers={"Content-Disposition": disposition},
+            background=BackgroundTask(lambda: os.path.isfile(tmp.name) and os.unlink(tmp.name)),
         )
     except HTTPException:
         raise

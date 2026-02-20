@@ -16,7 +16,7 @@ export default function Gallery() {
   const [error, setError] = useState(null)
   const [deployInfo, setDeployInfo] = useState(null)
   const [gridCols, setGridCols] = useState(4)
-  const [maxShow, setMaxShow] = useState(48)
+  const [maxShow, setMaxShow] = useState(48) // 与后端 MAX_PAGE_SIZE 一致，避免单次加载过多导致 CPU 飙升
   const [collapsedEps, setCollapsedEps] = useState(() => new Set())
   const [lastAnnotated, setLastAnnotated] = useState(null)
   const navigate = useNavigate()
@@ -195,7 +195,7 @@ export default function Gallery() {
 
         <h2>显示设置</h2>
         <label>网格列数 <input type="range" min={2} max={8} value={gridCols} onChange={(e) => setGridCols(Number(e.target.value))} /> {gridCols}</label>
-        <label>每 ep 最多预览 <input type="number" min={0} max={500} value={maxShow} onChange={(e) => setMaxShow(Number(e.target.value))} /></label>
+        <label>每 ep 最多预览 <input type="number" min={0} max={100} value={maxShow} onChange={(e) => setMaxShow(Math.min(100, Math.max(0, Number(e.target.value) || 0)))} /></label>
 
         <h2>Episode 折叠</h2>
         <div className={styles.foldBtns}>
