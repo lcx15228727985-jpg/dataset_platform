@@ -86,8 +86,13 @@ export async function login(userId, password) {
     body: JSON.stringify({ user_id: userId, password }),
   })
   if (!r.ok) {
-    const j = await r.json().catch(() => ({}))
-    throw new Error(j.detail || await r.text())
+    const text = await r.text()
+    let msg = text
+    try {
+      const j = JSON.parse(text)
+      if (j.detail) msg = j.detail
+    } catch (_) {}
+    throw new Error(msg)
   }
   return r.json()
 }
@@ -109,8 +114,14 @@ export async function clearWorkstationAnnotation(pathId) {
     body: JSON.stringify({ path_id: pathId, boxes: [] }),
   })
   if (!r.ok) {
-    const j = await r.json().catch(() => ({}))
-    throw new Error(j.detail || await r.text())
+    const text = await r.text()
+    try {
+      const j = JSON.parse(text)
+      throw new Error(j.detail || text)
+    } catch (e) {
+      if (e instanceof SyntaxError) throw new Error(text)
+      throw e
+    }
   }
   return r.json()
 }
@@ -123,8 +134,14 @@ export async function saveWorkstationBoxes(pathId, boxes) {
     body: JSON.stringify({ path_id: pathId, boxes }),
   })
   if (!r.ok) {
-    const j = await r.json().catch(() => ({}))
-    throw new Error(j.detail || await r.text())
+    const text = await r.text()
+    try {
+      const j = JSON.parse(text)
+      throw new Error(j.detail || text)
+    } catch (e) {
+      if (e instanceof SyntaxError) throw new Error(text)
+      throw e
+    }
   }
   return r.json()
 }

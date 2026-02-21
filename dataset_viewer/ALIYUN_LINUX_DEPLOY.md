@@ -190,11 +190,35 @@ docker compose up -d --build
 
 # 再次扫描数据集（新增 run/episode 后）
 docker exec -it dataset-annotation bash -c "cd /app && python -m backend.scan_dataset"
+
+# 从磁盘 *_annot.json 同步到 DB（恢复备份后，使导出与统计正确）
+docker exec -it dataset-annotation bash -c "cd /app && python -m backend.sync_annotations_from_disk"
 ```
 
 ---
 
-## 十一、环境变量说明
+## 十一、标注备份与恢复（更新版本前后必读）
+
+**备份标注（含 catalog.db + *_annot.json）：**
+```bash
+cd /data && find . \( -name "*_annot.json" -o -name "catalog.db" \) | tar -czvf /root/annot_backup_$(date +%Y%m%d_%H%M).tar.gz -T -
+```
+
+**下载到本机：**
+```bash
+scp "root@<公网IP>:/root/annot_backup_*.tar.gz" ~/Downloads/
+```
+
+**恢复标注（更新版本/重建后）：** 将备份解压到 `/data` 覆盖，然后：
+```bash
+docker exec -it dataset-annotation bash -c "cd /app && python -m backend.scan_dataset"
+# 若主标注页保存的标注需同步到 DB，再执行：
+docker exec -it dataset-annotation bash -c "cd /app && python -m backend.sync_annotations_from_disk"
+```
+
+---
+
+## 十二、环境变量说明
 
 | 变量 | 说明 | 默认 |
 |------|------|------|
@@ -205,14 +229,14 @@ docker exec -it dataset-annotation bash -c "cd /app && python -m backend.scan_da
 
 ---
 
-## 十二、常见问题
+## 十三、常见问题
 
-### 12.1 端口 8000 无法访问
+### 13.1 端口 8000 无法访问
 
 - 确认安全组已放行 **TCP 8000**（见第八步）。
 - 在服务器上执行：`curl http://localhost:8000/api/health`，若正常则多为安全组或防火墙问题。
 
-### 12.2 容器启动失败或构建报错
+### 13.2 容器启动失败或构建报错
 
 ```bash
 docker compose logs

@@ -87,9 +87,9 @@ DATA_ROOT = get_data_root()
 MAX_PAGE_SIZE = 100
 MAX_EPISODE_IMAGES_LIMIT = 100
 
-# 缩略图缓存：同一张图重复请求时直接返回缓存，降低 CPU（标注量大时大量缩略图请求会占满 CPU）
+# 缩略图缓存：同一张图重复请求时直接返回缓存，降低 CPU
 _THUMB_CACHE: OrderedDict = OrderedDict()
-_THUMB_CACHE_MAX = 500
+_THUMB_CACHE_MAX = 2000  # 增大缓存减少重复生成
 
 # SQLite 回退
 try:
@@ -105,6 +105,7 @@ try:
         upsert_annotation,
         update_image_annotated,
         get_all_annotated_for_export,
+        get_all_annotated_merged,
         get_annotation_counts_by_user,
     )
     _db_path = get_db_path()
@@ -114,7 +115,7 @@ except Exception:
     _db_path = None
     get_db_path = get_db_stats = get_runs_from_db = get_episodes_from_db = get_images_cursor = get_images_page = None  # type: ignore
     get_image_by_path_id = get_annotation_boxes = upsert_annotation = update_image_annotated = None  # type: ignore
-    get_all_annotated_for_export = get_annotation_counts_by_user = None  # type: ignore
+    get_all_annotated_for_export = get_all_annotated_merged = get_annotation_counts_by_user = None  # type: ignore
 
 try:
     from . import pg_db
@@ -360,8 +361,8 @@ def _media_type(path: str) -> str:
     return m.get(ext, "application/octet-stream")
 
 
-def _serve_image(image_id_or_path: str, thumb: bool = False, thumb_size: int = 150):
-    """解析 id/path 并返回图片文件；thumb=True 时返回缩略图（最长边 thumb_size px），带 LRU 缓存以降低 CPU"""
+def _serve_image(image_id_or_path: str, thumb: bool = False, thumb_size: int = 120):
+    """解析 id/path 并返回图片；thumb=True 时返回缩略图，带 LRU 缓存降低 CPU"""
     import urllib.parse
     raw = urllib.parse.unquote(image_id_or_path)
     path = image_id_to_path(DATA_ROOT, raw)
@@ -379,9 +380,9 @@ def _serve_image(image_id_or_path: str, thumb: bool = False, thumb_size: int = 1
         w, h = img.size
         if w > thumb_size or h > thumb_size:
             r = min(thumb_size / w, thumb_size / h)
-            img = img.resize((int(w * r), int(h * r)), Image.LANCZOS)
+            img = img.resize((int(w * r), int(h * r)), Image.BILINEAR)  # 比 LANCZOS 快，CPU 占用低
         buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=85)
+        img.save(buf, format="JPEG", quality=72)  # 略降质量减少体积与编码时间
         data = buf.getvalue()
         while len(_THUMB_CACHE) >= _THUMB_CACHE_MAX:
             _THUMB_CACHE.popitem(last=False)
@@ -393,7 +394,7 @@ def _serve_image(image_id_or_path: str, thumb: bool = False, thumb_size: int = 1
 
 @app.get("/api/image")
 def api_get_image_query(path: str = "", thumb: int = 0):
-    """path= 相对 data root；thumb=1 时返回缩略图（最长边 150px）"""
+    """path= 相对 data root；thumb=1 时返回缩略图（最长边 120px）"""
     if not path:
         raise HTTPException(status_code=400, detail="Missing path parameter")
     return _serve_image(path, thumb=thumb == 1)
@@ -455,6 +456,11 @@ async def api_workstation_data(path: str = ""):
         if not img_row:
             raise HTTPException(status_code=404, detail="Image not in catalog")
         boxes = await asyncio.to_thread(get_annotation_boxes, _db_path, img_row["id"])
+    # DB 无 boxes 时从磁盘 *_annot.json 读取（主标注页保存的）
+    if not boxes:
+        ann = load_annotation(file_path)
+        objs = ann.get("objects") or ann.get("boxes") or []
+        boxes = objs if isinstance(objs, list) else []
     width, height = _get_image_dimensions(file_path)
     return {
         "path_id": path,
@@ -512,15 +518,16 @@ async def api_export_annotations(format: str = "json", save: bool = False):
     导出所有已标注图片数据：run、ep、path_id、filename、boxes。
     format=json（默认）或 csv。save=1 时同时保存到服务器导出目录（用于 Linux 训练）。
     """
-    if not await _workstation_available() or get_all_annotated_for_export is None:
+    if not await _workstation_available() or get_all_annotated_merged is None:
         raise HTTPException(
             status_code=501,
             detail="Export requires catalog DB. Run: python -m backend.scan_dataset or init_pg_db",
         )
+    # 使用 merged：合并 DB + 磁盘 *_annot.json，支持恢复上一版本主标注页的标注
     if await _use_pg() and pg_db:
-        rows = await pg_db.get_all_annotated_for_export()
+        rows = await pg_db.get_all_annotated_for_export()  # pg 暂用原逻辑
     else:
-        rows = await asyncio.to_thread(get_all_annotated_for_export, _db_path)
+        rows = await asyncio.to_thread(get_all_annotated_merged, _db_path, DATA_ROOT)
     fmt = (format or "json").lower()
     if fmt == "csv":
         import csv
@@ -565,10 +572,11 @@ async def api_export_annotated_images_zip():
                 status_code=501,
                 detail="Export requires catalog DB. Run: python -m backend.scan_dataset or init_pg_db",
             )
+        # 使用 merged：合并 DB + 磁盘，支持主标注页标注的导出
         if await _use_pg() and pg_db:
             rows = await pg_db.get_all_annotated_for_export()
         else:
-            rows = await asyncio.to_thread(get_all_annotated_for_export, _db_path)
+            rows = await asyncio.to_thread(get_all_annotated_merged, _db_path, DATA_ROOT)
         if not rows:
             raise HTTPException(status_code=404, detail="No annotated images to export")
 
@@ -604,34 +612,38 @@ async def api_export_annotated_images_zip():
                 return None
 
         def build_zip_to_path(zip_path: str) -> None:
-            """将 ZIP 写入文件，使用低压缩级别以加快导出、减少 CPU；避免整包进内存。"""
-            with zipfile.ZipFile(
-                zip_path, "w", zipfile.ZIP_DEFLATED, compresslevel=1
-            ) as zf:
-                for r in rows:
-                    run_name = r.get("run", "")
-                    ep_name = r.get("ep", "")
-                    path_id = (r.get("path_id") or "").replace("\\", "/").strip()
-                    filename = r.get("filename") or os.path.basename(path_id)
-                    full_path = os.path.normpath(os.path.join(DATA_ROOT, path_id))
-                    if not os.path.isfile(full_path):
-                        continue
-                    arcname = f"{run_name}标注版/{ep_name}/{filename}"
-                    boxes = r.get("boxes") or []
-                    if boxes:
-                        png_bytes = draw_boxes_on_image(full_path, boxes)
-                        if png_bytes:
-                            zf.writestr(arcname, png_bytes)
-                        else:
-                            try:
-                                zf.write(full_path, arcname=arcname)
-                            except Exception:
-                                continue
-                    else:
-                        try:
-                            zf.write(full_path, arcname=arcname)
-                        except Exception:
+            """ZIP 导出：并行绘制框以加速，低压缩级别减少 CPU"""
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            def process_one(r: dict) -> tuple[str, bytes | str | None]:
+                run_name = r.get("run", "")
+                ep_name = r.get("ep", "")
+                path_id = (r.get("path_id") or "").replace("\\", "/").strip()
+                filename = r.get("filename") or os.path.basename(path_id)
+                full_path = os.path.normpath(os.path.join(DATA_ROOT, path_id))
+                if not os.path.isfile(full_path):
+                    return ("", None)
+                arcname = f"{run_name}标注版/{ep_name}/{filename}"
+                boxes = r.get("boxes") or []
+                if boxes:
+                    png_bytes = draw_boxes_on_image(full_path, boxes)
+                    return (arcname, png_bytes if png_bytes else full_path)
+                return (arcname, full_path)
+
+            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, compresslevel=1) as zf:
+                max_workers = min(8, (os.cpu_count() or 4))
+                with ThreadPoolExecutor(max_workers=max_workers) as ex:
+                    futures = {ex.submit(process_one, r): r for r in rows}
+                    for fut in as_completed(futures):
+                        arcname, data = fut.result()
+                        if not arcname or data is None:
                             continue
+                        try:
+                            if isinstance(data, bytes):
+                                zf.writestr(arcname, data)
+                            else:
+                                zf.write(data, arcname=arcname)
+                        except Exception:
+                            pass
 
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
         tmp.close()
@@ -671,13 +683,27 @@ def api_get_annotation(image_id: str):
 
 
 @app.post("/api/annotation/{image_id:path}")
-def api_save_annotation(image_id: str, body: AnnotationBody):
-    """保存标注"""
+async def api_save_annotation(image_id: str, body: AnnotationBody):
+    """保存标注（磁盘 + DB 双写，便于导出与恢复）"""
     path = image_id_to_path(DATA_ROOT, image_id)
     if not path or not os.path.isfile(path):
         raise HTTPException(status_code=404, detail="Image not found")
     data = body.model_dump()
     save_annotation(path, data)
+    # 双写 DB，保证导出与工作台可读到
+    boxes = data.get("objects") or data.get("boxes") or []
+    if await _workstation_available() and (upsert_annotation is not None and update_image_annotated is not None):
+        path_id = image_id.strip()
+        if await _use_pg() and pg_db:
+            img_row = await pg_db.get_image_by_path_id(path_id)
+            if img_row:
+                await pg_db.upsert_annotation(img_row["id"], boxes, None)
+                await pg_db.update_image_annotated(img_row["id"], annotated=len(boxes) > 0)
+        else:
+            img_row = await asyncio.to_thread(get_image_by_path_id, _db_path, path_id)
+            if img_row:
+                await asyncio.to_thread(upsert_annotation, _db_path, img_row["id"], boxes, None)
+                await asyncio.to_thread(update_image_annotated, _db_path, img_row["id"], annotated=len(boxes) > 0)
     return {"status": "success"}
 
 

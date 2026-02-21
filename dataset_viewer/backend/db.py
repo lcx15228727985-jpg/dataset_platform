@@ -12,6 +12,7 @@ from .data import (
     list_ep_folders,
     IMAGE_EXT,
     get_annotation_path,
+    load_annotation,
 )
 
 DB_NAME = "catalog.db"
@@ -274,7 +275,7 @@ def upsert_annotation(db_path: str, image_id: int, boxes: list, user_id: str | N
 
 
 def get_all_annotated_for_export(db_path: str) -> list[dict]:
-    """获取所有已标注图片：run, ep, path_id, filename, boxes。用于导出"""
+    """获取所有已标注图片：run, ep, path_id, filename, boxes。仅从 annotations 表（工作台保存）"""
     import json
     _ensure_annotations_table(db_path)
     conn = sqlite3.connect(db_path)
@@ -296,6 +297,45 @@ def get_all_annotated_for_export(db_path: str) -> list[dict]:
             except Exception:
                 pass
         out.append({"run": r[0], "ep": r[1], "path_id": r[2], "filename": r[3], "boxes": boxes})
+    return out
+
+
+def get_all_annotated_merged(db_path: str, data_root: str) -> list[dict]:
+    """
+    获取所有已标注图片（合并 DB + 磁盘）：run, ep, path_id, filename, boxes。
+    DB annotations 表优先；若无则从 *_annot.json 读取，保证主标注页保存的标注也能导出与恢复。
+    """
+    import json
+    _ensure_annotations_table(db_path)
+    conn = sqlite3.connect(db_path)
+    # 所有 annotated=1 的图片
+    rows = conn.execute(
+        """SELECT r.name, e.name, i.path_id, i.filename, i.id, a.boxes
+           FROM images i
+           JOIN episodes e ON i.episode_id = e.id
+           JOIN runs r ON e.run_id = r.id
+           LEFT JOIN annotations a ON a.image_id = i.id
+           WHERE i.annotated = 1
+           ORDER BY r.name, e.name, i.sort_key"""
+    ).fetchall()
+    conn.close()
+    out = []
+    for r in rows:
+        run_name, ep_name, path_id, filename, img_id, db_boxes = r[0], r[1], r[2], r[3], r[4], r[5]
+        boxes = []
+        if db_boxes:
+            try:
+                boxes = json.loads(db_boxes) if isinstance(db_boxes, str) else db_boxes
+            except Exception:
+                pass
+        if not boxes:
+            # 从磁盘 *_annot.json 读取（主标注页保存的）
+            full_path = os.path.normpath(os.path.join(data_root, path_id.replace("\\", "/")))
+            if os.path.isfile(full_path):
+                ann = load_annotation(full_path)
+                objs = ann.get("objects") or ann.get("boxes") or []
+                boxes = objs if isinstance(objs, list) else []
+        out.append({"run": run_name, "ep": ep_name, "path_id": path_id, "filename": filename, "boxes": boxes})
     return out
 
 
